@@ -552,7 +552,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             max_value=60.0,
             step=0.1,
             value=temperature_default,
-            placeholder="예: 33.5",
+            placeholder="예: 31.3~33.5",
             key=f"temperature_{nonce}",
         )
 
@@ -593,7 +593,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         notes = st.text_area(
             "상세 조치 및 특이사항",
             value=clean_text(editing_record.get("특이사항")),
-            placeholder="예: 설치·철수 시간 조정, 제작팀 협의사항 등",
+            placeholder="예: 설치·철수 시간 0시간 조정, 제작팀 협의사항 기재",
             height=120,
             key=f"notes_{nonce}",
         )
