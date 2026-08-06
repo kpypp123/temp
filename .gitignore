@@ -1,0 +1,15 @@
+# Local secrets and Google service-account key files
+.streamlit/secrets.toml
+*.json
+
+# Python cache / local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
