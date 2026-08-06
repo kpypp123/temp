@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 import gspread
 import pandas as pd
 import streamlit as st
-from gspread.exceptions import CellNotFound
 
 
 APP_TITLE = "현장 폭염 조치 기록"
@@ -278,10 +277,10 @@ def append_record(record: dict[str, Any]) -> None:
 def update_record(record_id: str, record: dict[str, Any]) -> None:
     worksheet = get_worksheet()
     ensure_headers(worksheet)
-    try:
-        cell = worksheet.find(record_id, in_column=1)
-    except CellNotFound as exc:
-        raise ValueError("수정할 기록을 찾지 못했습니다. 목록을 새로고침해 주세요.") from exc
+    cell = worksheet.find(record_id, in_column=1)
+
+    if cell is None:
+        raise ValueError("수정할 기록을 찾지 못했습니다. 목록을 새로고침해 주세요.")
 
     worksheet.update(
         range_name=f"A{cell.row}:R{cell.row}",
@@ -293,10 +292,11 @@ def update_record(record_id: str, record: dict[str, Any]) -> None:
 def delete_record(record_id: str) -> None:
     worksheet = get_worksheet()
     ensure_headers(worksheet)
-    try:
-        cell = worksheet.find(record_id, in_column=1)
-    except CellNotFound as exc:
-        raise ValueError("삭제할 기록을 찾지 못했습니다. 목록을 새로고침해 주세요.") from exc
+    cell = worksheet.find(record_id, in_column=1)
+
+    if cell is None:
+        raise ValueError("삭제할 기록을 찾지 못했습니다. 목록을 새로고침해 주세요.")
+
     worksheet.delete_rows(cell.row)
 
 
