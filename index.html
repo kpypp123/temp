@@ -32,13 +32,13 @@
         </div></div>
         <div class="section"><div class="section-title">폭염 및 휴게 정보</div><div class="fields">
           <div class="field"><label>폭염 노출 시간 (시 단위)</label><div class="time-pair"><select id="heatStart" aria-label="폭염 시작 시간"></select><span>~</span><select id="heatEnd" aria-label="폭염 종료 시간"></select></div></div>
-          <div class="field"><label for="temp">체감온도 (℃)</label><input id="temp" type="number" min="-20" max="60" step="0.1" placeholder="예: 33.5"></div>
+          <div class="field"><label for="temp">체감온도 (℃)</label><input id="temp" type="number" min="-20" max="60" step="0.1" placeholder="예: 31.3~33.5"></div>
           <div class="field"><label>휴게 시간</label><div class="time-pair"><input id="restStart" type="time"><span>~</span><input id="restEnd" type="time"></div></div>
           <div class="field"><label for="restMinutes">총 휴게시간 (분)</label><input id="restMinutes" type="number" min="0" step="1" placeholder="자동 계산 또는 직접 입력"></div>
         </div></div>
         <div class="section"><div class="section-title">조치 사항</div><div class="checks" id="measures">
-          <div class="check"><input id="m1" type="checkbox" value="1시간 근무 10분 휴식"><label for="m1">1시간 근무 10분 휴식</label></div><div class="check"><input id="m2" type="checkbox" value="2시간 근무 20분 휴식"><label for="m2">2시간 근무 20분 휴식</label></div><div class="check"><input id="m3" type="checkbox" value="냉방기 가동 25도 이하"><label for="m3">냉방기 가동 25도 이하</label></div><div class="check"><input id="m4" type="checkbox" value="제작팀 협의 조정"><label for="m4">제작팀 협의 조정</label></div>
-          <div class="field full"><label for="detail">상세 조치 및 특이사항</label><textarea id="detail" placeholder="예: 14시부터 2시간마다 20분 휴식, 작업자 이상 증상 없음"></textarea></div>
+          <div class="check"><input id="m1" type="checkbox" value="1시간 이내 10분 이상 휴식"><label for="m1">1시간 이내 10분 이상 휴식</label></div><div class="check"><input id="m2" type="checkbox" value="2시간 이내 20분 이상 휴식"><label for="m2">2시간 이내 20분 이상 휴식</label></div><div class="check"><input id="m3" type="checkbox" value="냉방기 가동 25도 이하"><label for="m3">냉방기 가동 25도 이하</label></div><div class="check"><input id="m4" type="checkbox" value="제작팀 협의 조정"><label for="m4">제작팀 협의 조정</label></div>
+          <div class="field full"><label for="detail">상세 조치 및 특이사항</label><textarea id="detail" placeholder="예: 설치 또는 철수 시간 O시간 조정, 제작팀과의 협의사항 기재"></textarea></div>
         </div></div>
         <div class="actions"><button class="btn primary" type="submit" id="submitBtn">기록 저장</button><button class="btn secondary" type="button" id="resetBtn">입력 초기화</button></div>
       </form>
