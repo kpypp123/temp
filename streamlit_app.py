@@ -4,7 +4,7 @@ import csv
 import io
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -45,8 +45,6 @@ MEASURE_OPTIONS = [
     "냉방기 가동 25도 이하",
     "제작팀 협의 조정",
 ]
-TIME_OPTIONS = ["선택"] + [f"{hour:02d}:{minute:02d}" for hour in range(24) for minute in range(0, 60, 5)]
-HEAT_HOUR_OPTIONS = ["선택"] + [f"{hour:02d}시" for hour in range(24)]
 
 
 st.set_page_config(
@@ -109,6 +107,11 @@ st.markdown(
     div[data-baseweb="input"] > div, div[data-baseweb="select"] > div,
     textarea {
         border-radius: 11px !important;
+    }
+    .time-help {
+        color: var(--muted);
+        font-size: 0.78rem;
+        margin: -0.2rem 0 0.65rem;
     }
     .metric-grid {
         display: grid;
@@ -192,6 +195,27 @@ def parse_float(value: Any) -> float | None:
         return float(text) if text else None
     except (TypeError, ValueError):
         return None
+
+
+def parse_time_value(value: Any, default: time | None = None) -> time | None:
+    text = clean_text(value)
+    if not text:
+        return default
+
+    normalized = text.replace("시", ":00")
+    if re.fullmatch(r"\d{1,2}", normalized):
+        normalized = f"{normalized}:00"
+
+    for fmt in ("%H:%M", "%H:%M:%S"):
+        try:
+            return datetime.strptime(normalized, fmt).time().replace(second=0, microsecond=0)
+        except ValueError:
+            continue
+    return default
+
+
+def format_time_value(value: time | None) -> str:
+    return value.strftime("%H:%M") if value is not None else ""
 
 
 def markdown_escape(value: Any) -> str:
@@ -301,7 +325,7 @@ def delete_record(record_id: str) -> None:
 
 
 def calculate_minutes(start: str, end: str) -> int:
-    if start == "선택" or end == "선택" or not start or not end:
+    if not start or not end:
         return 0
     start_hour, start_minute = map(int, start.split(":"))
     end_hour, end_minute = map(int, end.split(":"))
@@ -456,7 +480,6 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         team_options.append(current_team)
 
     temperature_default = parse_float(editing_record.get("체감온도"))
-    work_count_default = max(parse_int(editing_record.get("작업인원"), 1), 1)
     rest_minutes_default = max(parse_int(editing_record.get("휴게시간"), 0), 0)
 
     with st.form(f"record_form_{nonce}", border=True):
@@ -474,46 +497,55 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             index=option_index(team_options, current_team, 0),
             key=f"team_{nonce}",
         )
-        work_start = st.selectbox(
-            "근무 시작 *",
-            options=TIME_OPTIONS,
-            index=option_index(TIME_OPTIONS, editing_record.get("근무시작"), option_index(TIME_OPTIONS, "08:00")),
-            key=f"work_start_{nonce}",
-        )
-        work_end = st.selectbox(
-            "근무 종료 *",
-            options=TIME_OPTIONS,
-            index=option_index(TIME_OPTIONS, editing_record.get("근무종료"), option_index(TIME_OPTIONS, "17:00")),
-            key=f"work_end_{nonce}",
-        )
+
+        st.markdown("**근무 시간**")
+        work_left, work_right = st.columns(2)
+        with work_left:
+            work_start = st.time_input(
+                "시작",
+                value=parse_time_value(editing_record.get("근무시작"), time(8, 0)),
+                step=timedelta(minutes=10),
+                key=f"work_start_{nonce}",
+            )
+        with work_right:
+            work_end = st.time_input(
+                "종료",
+                value=parse_time_value(editing_record.get("근무종료"), time(17, 0)),
+                step=timedelta(minutes=10),
+                key=f"work_end_{nonce}",
+            )
+
         author = st.text_input(
             "작성자",
             value=clean_text(editing_record.get("작성자")),
             placeholder="예: 홍길동",
             key=f"author_{nonce}",
         )
-        work_count = st.number_input(
-            "작업 인원",
-            min_value=1,
-            step=1,
-            value=work_count_default,
-            key=f"work_count_{nonce}",
-        )
 
         st.divider()
         st.markdown("#### 폭염 및 휴게 정보")
-        heat_start = st.selectbox(
-            "폭염 노출 시작",
-            options=HEAT_HOUR_OPTIONS,
-            index=option_index(HEAT_HOUR_OPTIONS, editing_record.get("폭염시작"), 0),
-            key=f"heat_start_{nonce}",
+
+        st.markdown("**폭염 노출 시간**")
+        heat_left, heat_right = st.columns(2)
+        with heat_left:
+            heat_start = st.time_input(
+                "시작",
+                value=parse_time_value(editing_record.get("폭염시작")),
+                step=timedelta(minutes=10),
+                key=f"heat_start_{nonce}",
+            )
+        with heat_right:
+            heat_end = st.time_input(
+                "종료",
+                value=parse_time_value(editing_record.get("폭염종료")),
+                step=timedelta(minutes=10),
+                key=f"heat_end_{nonce}",
+            )
+        st.markdown(
+            '<div class="time-help">입력하지 않을 경우 비워두면 됩니다.</div>',
+            unsafe_allow_html=True,
         )
-        heat_end = st.selectbox(
-            "폭염 노출 종료",
-            options=HEAT_HOUR_OPTIONS,
-            index=option_index(HEAT_HOUR_OPTIONS, editing_record.get("폭염종료"), 0),
-            key=f"heat_end_{nonce}",
-        )
+
         temperature = st.number_input(
             "체감온도 (℃)",
             min_value=-20.0,
@@ -523,18 +555,24 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             placeholder="예: 33.5",
             key=f"temperature_{nonce}",
         )
-        rest_start = st.selectbox(
-            "휴게 시작",
-            options=TIME_OPTIONS,
-            index=option_index(TIME_OPTIONS, editing_record.get("휴게시작"), 0),
-            key=f"rest_start_{nonce}",
-        )
-        rest_end = st.selectbox(
-            "휴게 종료",
-            options=TIME_OPTIONS,
-            index=option_index(TIME_OPTIONS, editing_record.get("휴게종료"), 0),
-            key=f"rest_end_{nonce}",
-        )
+
+        st.markdown("**휴게 시간**")
+        rest_left, rest_right = st.columns(2)
+        with rest_left:
+            rest_start = st.time_input(
+                "시작",
+                value=parse_time_value(editing_record.get("휴게시작")),
+                step=timedelta(minutes=5),
+                key=f"rest_start_{nonce}",
+            )
+        with rest_right:
+            rest_end = st.time_input(
+                "종료",
+                value=parse_time_value(editing_record.get("휴게종료")),
+                step=timedelta(minutes=5),
+                key=f"rest_end_{nonce}",
+            )
+
         rest_minutes = st.number_input(
             "총 휴게시간 (분)",
             min_value=0,
@@ -578,17 +616,24 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
     validation_errors: list[str] = []
     if not site.strip():
         validation_errors.append("현장명을 입력해 주세요.")
-    if work_start == "선택" or work_end == "선택":
-        validation_errors.append("근무 시작과 종료 시간을 선택해 주세요.")
+    if work_start is None or work_end is None:
+        validation_errors.append("근무 시작과 종료 시간을 입력해 주세요.")
 
     if validation_errors:
         for message in validation_errors:
             st.error(message)
         return
 
+    work_start_text = format_time_value(work_start)
+    work_end_text = format_time_value(work_end)
+    heat_start_text = format_time_value(heat_start)
+    heat_end_text = format_time_value(heat_end)
+    rest_start_text = format_time_value(rest_start)
+    rest_end_text = format_time_value(rest_end)
+
     calculated_rest_minutes = int(rest_minutes)
     if calculated_rest_minutes == 0:
-        calculated_rest_minutes = calculate_minutes(rest_start, rest_end)
+        calculated_rest_minutes = calculate_minutes(rest_start_text, rest_end_text)
 
     now_text = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
     created_at = clean_text(editing_record.get("등록시간")) or now_text
@@ -599,15 +644,15 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         "작업날짜": work_date.isoformat(),
         "현장명": site.strip(),
         "팀": team,
-        "근무시작": work_start,
-        "근무종료": work_end,
+        "근무시작": work_start_text,
+        "근무종료": work_end_text,
         "작성자": author.strip(),
-        "작업인원": str(int(work_count)),
-        "폭염시작": "" if heat_start == "선택" else heat_start,
-        "폭염종료": "" if heat_end == "선택" else heat_end,
+        "작업인원": "",
+        "폭염시작": heat_start_text,
+        "폭염종료": heat_end_text,
         "체감온도": "" if temperature is None else f"{float(temperature):.1f}",
-        "휴게시작": "" if rest_start == "선택" else rest_start,
-        "휴게종료": "" if rest_end == "선택" else rest_end,
+        "휴게시작": rest_start_text,
+        "휴게종료": rest_end_text,
         "휴게시간": str(calculated_rest_minutes),
         "조치사항": " | ".join(measures),
         "특이사항": notes.strip(),
@@ -714,7 +759,7 @@ def render_records(records: pd.DataFrame, store_error: Exception | None) -> None
             )
             st.caption(
                 f"{work_date} · {clean_text(record.get('팀')) or '팀 미입력'} · "
-                f"작성자 {clean_text(record.get('작성자')) or '-'} · {parse_int(record.get('작업인원'), 0)}명"
+                f"작성자 {clean_text(record.get('작성자')) or '-'}"
             )
             st.write(f"근무: {clean_text(record.get('근무시작'))} ~ {clean_text(record.get('근무종료'))}")
             st.write(
