@@ -14,7 +14,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "빠른 시간 기록 v2 · 2026-08-07"
+APP_VERSION = "Professional UI v3 · 2026-08-07"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = "https://docs.google.com/spreadsheets/d/18c-qnfPmGG25qyAM497R7czDw3F7J7WRKmdLX3IGtY0"
 KST = ZoneInfo("Asia/Seoul")
@@ -59,7 +59,7 @@ TIME_FIELD_COLUMNS = {
 
 st.set_page_config(
     page_title=APP_TITLE,
-    page_icon="☀️",
+    page_icon=":material/health_and_safety:",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -68,142 +68,358 @@ st.markdown(
     """
     <style>
     :root {
-        --ink: #17231d;
-        --muted: #66736b;
-        --line: #dce4df;
-        --green: #176b45;
-        --green-soft: #e8f3ec;
-        --amber-soft: #fff0dc;
+        --bg: #f3f5f7;
+        --surface: #ffffff;
+        --surface-subtle: #f8f9fb;
+        --ink: #111827;
+        --muted: #667085;
+        --line: #d8dee7;
+        --line-strong: #c7ced8;
+        --navy: #172b4d;
+        --navy-hover: #0f213d;
+        --blue-soft: #eef3f8;
+        --danger: #b42318;
+        --danger-soft: #fef3f2;
+        --warning: #b54708;
+        --warning-soft: #fff7ed;
+        --success: #067647;
+        --success-soft: #ecfdf3;
     }
+
+    html, body, [class*="css"] {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+    }
+
     .stApp {
-        background: linear-gradient(135deg, #edf5ee 0%, #f7f5ee 50%, #eef3f0 100%);
+        background: var(--bg);
         color: var(--ink);
     }
+
+    header[data-testid="stHeader"] {
+        background: transparent;
+    }
+
+    #MainMenu, footer {
+        visibility: hidden;
+    }
+
     .block-container {
-        max-width: 760px;
-        padding-top: 1.1rem;
+        max-width: 860px;
+        padding-top: 1.35rem;
         padding-bottom: 5rem;
     }
-    .app-eyebrow {
-        color: var(--green);
-        font-size: 0.78rem;
-        font-weight: 800;
-        letter-spacing: 0.09em;
-        margin-bottom: 0.25rem;
+
+    .app-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1.25rem;
+        padding: 0.2rem 0 1.15rem;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 1rem;
     }
+
+    .app-kicker {
+        color: var(--muted);
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 0.28rem;
+    }
+
     .app-title {
-        font-size: clamp(1.75rem, 7vw, 2.5rem);
-        font-weight: 850;
-        letter-spacing: -0.04em;
-        line-height: 1.15;
+        color: var(--ink);
+        font-size: clamp(1.72rem, 5vw, 2.2rem);
+        font-weight: 760;
+        letter-spacing: -0.035em;
+        line-height: 1.2;
         margin: 0;
     }
+
     .app-subtitle {
         color: var(--muted);
         font-size: 0.9rem;
-        margin: 0.45rem 0 1.15rem;
-    }
-    div[data-testid="stForm"], div[data-testid="stVerticalBlockBorderWrapper"] {
-        background: rgba(255, 255, 255, 0.94);
-        border-color: rgba(220, 228, 223, 0.95);
-        border-radius: 18px;
-    }
-    div.stButton > button, div[data-testid="stFormSubmitButton"] > button,
-    div[data-testid="stDownloadButton"] > button {
-        min-height: 3rem;
-        border-radius: 12px;
-        font-weight: 750;
-    }
-    div[data-baseweb="input"] > div, div[data-baseweb="select"] > div,
-    textarea {
-        border-radius: 11px !important;
-    }
-    .time-help {
-        color: var(--muted);
-        font-size: 0.78rem;
-        margin: -0.2rem 0 0.65rem;
+        line-height: 1.55;
+        margin: 0.42rem 0 0;
     }
 
-    .version-badge {
-        display: inline-block;
-        margin: 0.15rem 0 0.9rem;
-        padding: 0.28rem 0.58rem;
-        border-radius: 999px;
-        background: var(--green-soft);
-        color: var(--green);
-        font-size: 0.75rem;
-        font-weight: 800;
+    .app-version {
+        flex: 0 0 auto;
+        color: var(--muted);
+        background: var(--surface-subtle);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.38rem 0.55rem;
+        font-size: 0.7rem;
+        font-weight: 650;
+        white-space: nowrap;
     }
+
+    .section-heading {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.72rem;
+        margin: 0 0 0.9rem;
+    }
+
+    .section-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 5px;
+        background: var(--navy);
+        color: #ffffff;
+        font-size: 0.72rem;
+        font-weight: 750;
+        line-height: 1;
+    }
+
+    .section-heading b {
+        display: block;
+        color: var(--ink);
+        font-size: 1rem;
+        font-weight: 730;
+        line-height: 1.3;
+    }
+
+    .section-heading small {
+        display: block;
+        color: var(--muted);
+        font-size: 0.78rem;
+        line-height: 1.45;
+        margin-top: 0.12rem;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: var(--surface);
+        border: 1px solid var(--line) !important;
+        border-radius: 10px !important;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        padding: 1.05rem 1.05rem 1.15rem;
+    }
+
+    div.stButton > button,
+    div[data-testid="stDownloadButton"] > button,
+    div[data-testid="stLinkButton"] a {
+        min-height: 2.8rem;
+        border-radius: 7px;
+        border: 1px solid var(--line-strong);
+        background: var(--surface);
+        color: var(--ink);
+        font-weight: 680;
+        box-shadow: none;
+        transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+    }
+
+    div.stButton > button:hover,
+    div[data-testid="stDownloadButton"] > button:hover,
+    div[data-testid="stLinkButton"] a:hover {
+        border-color: #98a2b3;
+        background: var(--surface-subtle);
+        color: var(--ink);
+    }
+
+    div.stButton > button[kind="primary"] {
+        background: var(--navy);
+        border-color: var(--navy);
+        color: #ffffff;
+    }
+
+    div.stButton > button[kind="primary"]:hover {
+        background: var(--navy-hover);
+        border-color: var(--navy-hover);
+        color: #ffffff;
+    }
+
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="textarea"] > div,
+    textarea {
+        border-radius: 7px !important;
+        border-color: var(--line-strong) !important;
+        background: #ffffff !important;
+    }
+
+    div[data-baseweb="input"] > div:focus-within,
+    div[data-baseweb="select"] > div:focus-within,
+    div[data-baseweb="textarea"] > div:focus-within {
+        border-color: var(--navy) !important;
+        box-shadow: 0 0 0 2px rgba(23, 43, 77, 0.09) !important;
+    }
+
+    label[data-testid="stWidgetLabel"] p {
+        color: #344054;
+        font-size: 0.84rem;
+        font-weight: 650;
+    }
+
+    hr {
+        border-color: var(--line) !important;
+        margin: 1.15rem 0 !important;
+    }
+
     .quick-time-summary {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.5rem;
-        margin: 0.55rem 0 0.8rem;
+        gap: 0.62rem;
+        margin: 0.72rem 0 0.7rem;
     }
+
     .quick-time-card {
-        background: #f6faf7;
+        background: var(--surface-subtle);
         border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 0.65rem 0.72rem;
-        font-size: 0.8rem;
-        line-height: 1.45;
+        border-radius: 8px;
+        padding: 0.78rem 0.82rem;
     }
-    .quick-time-card b {
+
+    .quick-time-card span {
         display: block;
-        color: var(--green);
-        font-size: 0.74rem;
-        margin-bottom: 0.15rem;
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-weight: 650;
+        margin-bottom: 0.2rem;
     }
+
+    .quick-time-card strong {
+        display: block;
+        color: var(--ink);
+        font-size: 0.97rem;
+        font-weight: 720;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+    }
+
     .metric-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.55rem;
-        margin: 0.5rem 0 1rem;
+        gap: 0.65rem;
+        margin: 0.65rem 0 1rem;
     }
+
     .metric-card {
-        background: rgba(255, 255, 255, 0.92);
+        background: var(--surface);
         border: 1px solid var(--line);
-        border-radius: 14px;
-        padding: 0.8rem;
+        border-radius: 8px;
+        padding: 0.9rem 0.95rem;
     }
+
+    .metric-card span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-weight: 650;
+        margin-bottom: 0.22rem;
+    }
+
     .metric-card b {
         display: block;
-        font-size: 1.35rem;
-        line-height: 1.2;
+        color: var(--ink);
+        font-size: 1.45rem;
+        font-weight: 740;
+        line-height: 1.15;
     }
-    .metric-card span {
-        color: var(--muted);
-        font-size: 0.76rem;
-    }
+
     .status-pill {
-        display: inline-block;
-        padding: 0.22rem 0.55rem;
-        border-radius: 999px;
-        background: var(--amber-soft);
-        color: #9a5012;
-        font-size: 0.76rem;
-        font-weight: 800;
-        margin-bottom: 0.35rem;
+        display: inline-flex;
+        align-items: center;
+        min-height: 1.7rem;
+        padding: 0.18rem 0.5rem;
+        border-radius: 5px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        color: #475467;
+        font-size: 0.72rem;
+        font-weight: 720;
+        margin-bottom: 0.42rem;
     }
+
+    .status-pill.status-caution {
+        background: var(--warning-soft);
+        border-color: #fed7aa;
+        color: var(--warning);
+    }
+
+    .status-pill.status-danger {
+        background: var(--danger-soft);
+        border-color: #fecdca;
+        color: var(--danger);
+    }
+
+    .status-pill.status-normal {
+        background: var(--success-soft);
+        border-color: #abefc6;
+        color: var(--success);
+    }
+
+    .record-details {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.48rem;
+        margin: 0.8rem 0 0.75rem;
+    }
+
+    .record-detail {
+        background: var(--surface-subtle);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 0.62rem 0.68rem;
+    }
+
+    .record-detail span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.68rem;
+        font-weight: 650;
+        margin-bottom: 0.12rem;
+    }
+
+    .record-detail b {
+        display: block;
+        color: var(--ink);
+        font-size: 0.84rem;
+        font-weight: 680;
+        line-height: 1.35;
+    }
+
     .setup-box {
-        background: #fff8e8;
-        border: 1px solid #efd9aa;
-        border-radius: 14px;
+        background: #fffcf5;
+        border: 1px solid #fedf89;
+        border-radius: 8px;
+        color: #7a2e0e;
         padding: 0.9rem 1rem;
         margin-bottom: 1rem;
     }
-    @media (max-width: 520px) {
+
+    @media (max-width: 600px) {
         .block-container {
             padding-left: 0.78rem;
             padding-right: 0.78rem;
-            padding-top: 0.8rem;
+            padding-top: 0.85rem;
         }
-        .metric-grid, .quick-time-summary {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+
+        .app-header {
+            display: block;
         }
-        .metric-grid .metric-card:last-child,
-        .quick-time-summary .quick-time-card:last-child {
-            grid-column: 1 / -1;
+
+        .app-version {
+            display: inline-block;
+            margin-top: 0.7rem;
+        }
+
+        .quick-time-summary,
+        .metric-grid,
+        .record-details {
+            grid-template-columns: 1fr;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] > div {
+            padding: 0.9rem;
         }
     }
     </style>
@@ -316,9 +532,9 @@ def render_time_summary(nonce: int) -> None:
     st.markdown(
         f"""
         <div class="quick-time-summary">
-            <div class="quick-time-card"><b>근무 시간</b>{work_text}</div>
-            <div class="quick-time-card"><b>폭염 노출</b>{heat_text}</div>
-            <div class="quick-time-card"><b>휴게 시간</b>{rest_text}</div>
+            <div class="quick-time-card"><span>근무 시간</span><strong>{work_text}</strong></div>
+            <div class="quick-time-card"><span>폭염 노출</span><strong>{heat_text}</strong></div>
+            <div class="quick-time-card"><span>휴게 시간</span><strong>{rest_text}</strong></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -494,13 +710,43 @@ def show_flash() -> None:
         st.session_state.flash = ""
 
 
+def render_section_heading(number: str, title: str, subtitle: str) -> None:
+    st.markdown(
+        f"""
+        <div class="section-heading">
+            <span class="section-number">{number}</span>
+            <div>
+                <b>{title}</b>
+                <small>{subtitle}</small>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def heat_level_class(value: Any) -> str:
+    temperature = parse_float(value)
+    if temperature is None:
+        return ""
+    if temperature >= 35:
+        return "status-danger"
+    if temperature >= 31:
+        return "status-caution"
+    return "status-normal"
+
+
 def render_header() -> None:
     st.markdown(
         f"""
-        <div class="app-eyebrow">HEAT SAFETY LOG</div>
-        <h1 class="app-title">현장 폭염 조치 기록</h1>
-        <p class="app-subtitle">모바일에서 현장 조치와 휴게 내역을 기록하고 Google Sheets에 공동 저장합니다.</p>
-        <div class="version-badge">{APP_VERSION}</div>
+        <div class="app-header">
+            <div>
+                <div class="app-kicker">현장 안전관리</div>
+                <h1 class="app-title">현장 폭염 조치 기록</h1>
+                <p class="app-subtitle">현장별 근무·폭염 노출·휴게 조치 내역을 기록하고 공동 관리합니다.</p>
+            </div>
+            <div class="app-version">{APP_VERSION}</div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -510,7 +756,7 @@ def render_navigation() -> None:
     left, right = st.columns(2)
     with left:
         if st.button(
-            "✍️ 새 기록",
+            "새 기록",
             use_container_width=True,
             type="primary" if st.session_state.page == "form" else "secondary",
             key="nav_form",
@@ -519,7 +765,7 @@ def render_navigation() -> None:
             st.rerun()
     with right:
         if st.button(
-            "📋 기록 조회",
+            "기록 조회",
             use_container_width=True,
             type="primary" if st.session_state.page == "records" else "secondary",
             key="nav_records",
@@ -557,7 +803,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             st.rerun()
 
     title = "기록 수정" if editing_id else "새 기록 작성"
-    st.subheader(title)
+    st.markdown(f"## {title}")
     nonce = st.session_state.form_nonce
     initialize_time_state(editing_record, nonce)
 
@@ -577,7 +823,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
     temperature_default = parse_float(editing_record.get("체감온도"))
 
     with st.container(border=True):
-        st.markdown("#### 기본 정보")
+        render_section_heading("01", "기본 정보", "현장과 담당 정보를 입력합니다.")
         work_date = st.date_input(
             "작업 날짜 *",
             value=default_date,
@@ -603,13 +849,13 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         )
 
         st.divider()
-        st.markdown("#### 빠른 시간 기록")
-        st.caption("장비를 들고 있어도 해당 버튼을 한 번 누르면 현재 한국 시간이 기록됩니다.")
+        render_section_heading("02", "시간 기록", "상황 발생 시 버튼 한 번으로 현재 시간을 입력합니다.")
+        st.caption("해당 버튼을 누른 시점의 한국 시간이 즉시 입력됩니다.")
 
         work_left, work_right = st.columns(2)
         with work_left:
             st.button(
-                "▶ 근무 시작",
+                "근무 시작 기록",
                 key=f"quick_work_start_{nonce}",
                 use_container_width=True,
                 on_click=set_time_now,
@@ -617,7 +863,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             )
         with work_right:
             st.button(
-                "■ 근무 종료",
+                "근무 종료 기록",
                 key=f"quick_work_end_{nonce}",
                 use_container_width=True,
                 on_click=set_time_now,
@@ -627,7 +873,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         heat_left, heat_right = st.columns(2)
         with heat_left:
             st.button(
-                "☀️ 폭염 시작",
+                "폭염 시작 기록",
                 key=f"quick_heat_start_{nonce}",
                 use_container_width=True,
                 on_click=set_time_now,
@@ -635,7 +881,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             )
         with heat_right:
             st.button(
-                "🌤️ 폭염 종료",
+                "폭염 종료 기록",
                 key=f"quick_heat_end_{nonce}",
                 use_container_width=True,
                 on_click=set_time_now,
@@ -645,7 +891,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         rest_left, rest_right = st.columns(2)
         with rest_left:
             st.button(
-                "☕ 휴게 시작",
+                "휴게 시작 기록",
                 key=f"quick_rest_start_{nonce}",
                 use_container_width=True,
                 on_click=set_time_now,
@@ -653,7 +899,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             )
         with rest_right:
             st.button(
-                "✅ 휴게 종료",
+                "휴게 종료 기록",
                 key=f"quick_rest_end_{nonce}",
                 use_container_width=True,
                 on_click=set_time_now,
@@ -661,10 +907,10 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             )
 
         render_time_summary(nonce)
-        st.caption("버튼으로 기록한 시간은 아래 '기록 저장'을 눌러야 Google Sheets에 저장됩니다.")
+        st.caption("입력된 시간은 하단의 기록 저장을 완료해야 Google Sheets에 반영됩니다.")
 
         with st.expander("시간 직접 수정", expanded=False):
-            st.caption("빠른 기록이 잘못됐을 때만 수정하세요.")
+            st.caption("필요한 경우에만 시간을 직접 수정하거나 초기화합니다.")
 
             direct_work_left, direct_work_right = st.columns(2)
             with direct_work_left:
@@ -737,19 +983,19 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
                 )
 
         st.divider()
-        st.markdown("#### 폭염 정보")
+        render_section_heading("03", "폭염 정보", "현장에서 확인한 체감온도를 기록합니다.")
         temperature = st.number_input(
             "체감온도 (℃)",
             min_value=-20.0,
             max_value=60.0,
             step=0.1,
             value=temperature_default,
-            placeholder="예: 33.5",
+            placeholder="예: 31.3~33.5",
             key=f"temperature_{nonce}",
         )
 
         st.divider()
-        st.markdown("#### 조치 사항")
+        render_section_heading("04", "조치 사항", "시행한 조치와 특이사항을 남깁니다.")
         measures = st.multiselect(
             "시행한 조치",
             options=MEASURE_OPTIONS,
@@ -759,7 +1005,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         notes = st.text_area(
             "상세 조치 및 특이사항",
             value=clean_text(editing_record.get("특이사항")),
-            placeholder="예: 설치·철수 시간 조정, 제작팀 협의사항 등",
+            placeholder="예: 설치·철수 시간 0시간 조정, 제작팀 협의사항 기재",
             height=120,
             key=f"notes_{nonce}",
         )
@@ -862,9 +1108,9 @@ def render_metrics(records: pd.DataFrame) -> None:
     st.markdown(
         f"""
         <div class="metric-grid">
-            <div class="metric-card"><b>{len(records)}</b><span>전체 기록</span></div>
-            <div class="metric-card"><b>{hot_count}</b><span>33℃ 이상</span></div>
-            <div class="metric-card"><b>{total_rest}분</b><span>누적 휴게</span></div>
+            <div class="metric-card"><span>전체 기록</span><b>{len(records)}</b></div>
+            <div class="metric-card"><span>체감온도 33℃ 이상</span><b>{hot_count}</b></div>
+            <div class="metric-card"><span>누적 휴게시간</span><b>{total_rest}분</b></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -872,10 +1118,10 @@ def render_metrics(records: pd.DataFrame) -> None:
 
 
 def render_records(records: pd.DataFrame, store_error: Exception | None) -> None:
-    st.subheader("저장된 기록")
+    st.markdown("## 기록 조회")
     spreadsheet_url = get_secret(("app", "spreadsheet_url"), SPREADSHEET_URL_FALLBACK)
     st.link_button(
-        "📊 Google Sheets에서 기록 열기",
+        "Google Sheets 열기",
         spreadsheet_url,
         use_container_width=True,
     )
@@ -935,28 +1181,35 @@ def render_records(records: pd.DataFrame, store_error: Exception | None) -> None
         temperature_label = f" · {temperature_text}℃" if temperature_text else ""
 
         with st.container(border=True):
-            st.markdown(f"### {site}")
-            st.markdown(
-                f'<span class="status-pill">{heat_level(temperature_text)}{temperature_label}</span>',
-                unsafe_allow_html=True,
-            )
-            st.caption(
-                f"{work_date} · {clean_text(record.get('팀')) or '팀 미입력'} · "
-                f"작성자 {clean_text(record.get('작성자')) or '-'}"
-            )
-            st.write(f"근무: {clean_text(record.get('근무시작'))} ~ {clean_text(record.get('근무종료'))}")
-            st.write(
-                "폭염 노출: "
-                f"{clean_text(record.get('폭염시작')) or '-'} ~ {clean_text(record.get('폭염종료')) or '-'}"
-            )
-            st.write(
-                "휴게: "
+            status_class = heat_level_class(temperature_text)
+            team_text = clean_text(record.get("팀")) or "팀 미입력"
+            author_text = clean_text(record.get("작성자")) or "-"
+            work_time_text = f"{clean_text(record.get('근무시작')) or '-'} ~ {clean_text(record.get('근무종료')) or '-'}"
+            heat_time_text = f"{clean_text(record.get('폭염시작')) or '-'} ~ {clean_text(record.get('폭염종료')) or '-'}"
+            rest_time_text = (
                 f"{clean_text(record.get('휴게시작')) or '-'} ~ {clean_text(record.get('휴게종료')) or '-'} "
                 f"({parse_int(record.get('휴게시간'), 0)}분)"
             )
-            st.write(f"조치사항: {clean_text(record.get('조치사항')) or '-'}")
+
+            st.markdown(f"### {site}")
+            st.markdown(
+                f'<span class="status-pill {status_class}">{heat_level(temperature_text)}{temperature_label}</span>',
+                unsafe_allow_html=True,
+            )
+            st.caption(f"{work_date} · {team_text} · 작성자 {author_text}")
+            st.markdown(
+                f"""
+                <div class="record-details">
+                    <div class="record-detail"><span>근무 시간</span><b>{work_time_text}</b></div>
+                    <div class="record-detail"><span>폭염 노출</span><b>{heat_time_text}</b></div>
+                    <div class="record-detail"><span>휴게 시간</span><b>{rest_time_text}</b></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.write(f"**조치사항**  {clean_text(record.get('조치사항')) or '-'}")
             if clean_text(record.get("특이사항")):
-                st.write(f"특이사항: {clean_text(record.get('특이사항'))}")
+                st.write(f"**특이사항**  {clean_text(record.get('특이사항'))}")
             st.caption(f"등록 {clean_text(record.get('등록시간'))} · 수정 {clean_text(record.get('수정시간'))}")
 
             edit_col, delete_col = st.columns(2)
