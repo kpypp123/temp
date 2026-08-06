@@ -15,6 +15,7 @@ import streamlit as st
 
 APP_TITLE = "현장 폭염 조치 기록"
 WORKSHEET_DEFAULT = "records"
+SPREADSHEET_URL_FALLBACK = "https://docs.google.com/spreadsheets/d/18c-qnfPmGG25qyAM497R7czDw3F7J7WRKmdLX3IGtY0"
 KST = ZoneInfo("Asia/Seoul")
 
 COLUMNS = [
@@ -552,7 +553,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             max_value=60.0,
             step=0.1,
             value=temperature_default,
-            placeholder="예: 31.3~33.5",
+            placeholder="예: 33.5",
             key=f"temperature_{nonce}",
         )
 
@@ -593,7 +594,7 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         notes = st.text_area(
             "상세 조치 및 특이사항",
             value=clean_text(editing_record.get("특이사항")),
-            placeholder="예: 설치·철수 시간 0시간 조정, 제작팀 협의사항 기재",
+            placeholder="예: 설치·철수 시간 조정, 제작팀 협의사항 등",
             height=120,
             key=f"notes_{nonce}",
         )
@@ -697,6 +698,13 @@ def render_metrics(records: pd.DataFrame) -> None:
 
 def render_records(records: pd.DataFrame, store_error: Exception | None) -> None:
     st.subheader("저장된 기록")
+    spreadsheet_url = get_secret(("app", "spreadsheet_url"), SPREADSHEET_URL_FALLBACK)
+    st.link_button(
+        "📊 Google Sheets에서 기록 열기",
+        spreadsheet_url,
+        use_container_width=True,
+    )
+
     if store_error is not None:
         st.info("Google Sheets 연결이 완료되면 공동 기록이 여기에 표시됩니다.")
         return
