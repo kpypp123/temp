@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 import gspread
 import pandas as pd
 import streamlit as st
-from gspread.exceptions import CellNotFound
+
 
 
 APP_TITLE = "현장 폭염 조치 기록"
