@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>현장 폭염 조치 기록</title>
+  <style>
+    :root{--ink:#17231d;--muted:#66736b;--line:#dce4df;--paper:#fff;--bg:#f2f5f1;--green:#176b45;--green2:#e8f3ec;--amber:#b65f16;--red:#b63535;--shadow:0 14px 40px rgba(22,51,36,.09)}
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(135deg,#edf5ee 0,#f7f5ee 50%,#eef3f0 100%);color:var(--ink);font-family:"Malgun Gothic","Apple SD Gothic Neo",sans-serif;min-height:100vh}
+    .wrap{max-width:1180px;margin:auto;padding:28px 20px 60px}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;margin-bottom:22px}.eyebrow{font-size:13px;color:var(--green);font-weight:800;letter-spacing:.08em}.top h1{font-size:clamp(27px,4vw,42px);margin:7px 0 4px;letter-spacing:-.04em}.top p{color:var(--muted);margin:0;font-size:14px}.save-state{background:var(--green2);color:var(--green);padding:9px 13px;border-radius:999px;font-size:13px;font-weight:800;white-space:nowrap}
+    .grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr);gap:20px}.card{background:rgba(255,255,255,.94);border:1px solid rgba(255,255,255,.9);border-radius:20px;box-shadow:var(--shadow);padding:24px}.card h2{font-size:19px;margin:0 0 18px}.section{margin-top:22px;padding-top:20px;border-top:1px solid var(--line)}.section:first-of-type{margin-top:0;padding-top:0;border-top:0}.section-title{font-size:13px;font-weight:800;color:var(--green);margin-bottom:12px}
+    .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.field.full{grid-column:1/-1}label{display:block;font-size:13px;font-weight:700;margin-bottom:7px}input,select,textarea{width:100%;border:1px solid #cad4cd;border-radius:11px;background:#fff;color:var(--ink);padding:11px 12px;font:inherit;outline:none}input:focus,select:focus,textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(23,107,69,.12)}textarea{min-height:86px;resize:vertical}.time-pair{display:grid;grid-template-columns:1fr 26px 1fr;align-items:center;gap:6px}.time-pair span{text-align:center;color:var(--muted)}.checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.check{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:10px;background:#fafcf9}.check input{width:17px;height:17px;accent-color:var(--green)}.check label{margin:0;font-weight:500;font-size:14px}
+    .actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:22px}.btn{border:0;border-radius:11px;padding:11px 15px;font-weight:800;cursor:pointer;font-family:inherit}.primary{background:var(--green);color:#fff}.secondary{background:#edf1ee;color:var(--ink)}.ghost{background:#fff;border:1px solid var(--line);color:var(--ink)}.danger{color:var(--red)}.btn:hover{filter:brightness(.97)}
+    .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:17px}.metric{background:#f6f8f5;border-radius:12px;padding:12px}.metric b{display:block;font-size:21px}.metric span{font-size:12px;color:var(--muted)}.records{display:flex;flex-direction:column;gap:10px;max-height:660px;overflow:auto;padding-right:3px}.empty{text-align:center;border:1px dashed #cbd5ce;border-radius:14px;padding:38px 15px;color:var(--muted);line-height:1.7}.record{border:1px solid var(--line);border-radius:14px;padding:15px}.record-head{display:flex;justify-content:space-between;gap:12px}.record h3{font-size:15px;margin:0}.badge{font-size:12px;font-weight:800;background:#fff0dc;color:var(--amber);border-radius:999px;padding:5px 8px;white-space:nowrap}.record-meta{font-size:13px;color:var(--muted);margin-top:7px;line-height:1.6}.record-actions{display:flex;gap:6px;margin-top:10px}.record-actions button{border:0;background:#f0f3f1;padding:6px 9px;border-radius:8px;cursor:pointer}.export{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:16px}.notice{font-size:12px;color:var(--muted);line-height:1.6;margin:14px 2px 0}
+    .toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;background:#17231d;color:#fff;border-radius:10px;padding:11px 16px;font-size:14px;transition:.2s;pointer-events:none}.toast.show{opacity:1;transform:translate(-50%,0)}
+    @media(max-width:820px){.grid{grid-template-columns:1fr}.records{max-height:none}}@media(max-width:540px){.wrap{padding:20px 12px 40px}.top{align-items:flex-start;flex-direction:column}.card{padding:18px;border-radius:16px}.fields,.checks{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.summary .metric:last-child{grid-column:1/-1}.export{grid-template-columns:1fr}}
+    @media print{body{background:#fff}.wrap{max-width:none;padding:0}.top,.form-card,.export,.notice,.record-actions{display:none!important}.grid{display:block}.card{box-shadow:none;border:0;padding:0}.records{max-height:none}.record{break-inside:avoid}.empty{display:none}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <header class="top"><div><div class="eyebrow">HEAT SAFETY LOG</div><h1>현장 폭염 조치 기록</h1><p>체감온도와 현장 조치·휴게 내역을 간편하게 남기세요.</p></div><div class="save-state">● 이 기기에 자동 저장</div></header>
+  <div class="grid">
+    <section class="card form-card"><h2 id="formTitle">새 기록 작성</h2>
+      <form id="logForm">
+        <div class="section"><div class="section-title">기본 정보</div><div class="fields">
+          <div class="field"><label for="date">작업 날짜 *</label><input id="date" type="date" required></div>
+          <div class="field"><label for="site">현장명 *</label><input id="site" placeholder="예: ○○공사 현장" required></div>
+          <div class="field full"><label for="place">작업 장소</label><input id="place" placeholder="예: 옥외 자재 적재장"></div>
+          <div class="field"><label>근무 시간 *</label><div class="time-pair"><input id="workStart" type="time" required><span>~</span><input id="workEnd" type="time" required></div></div>
+          <div class="field"><label for="worker">작성자 / 작업 인원</label><input id="worker" placeholder="예: 홍길동 / 8명"></div>
+        </div></div>
+        <div class="section"><div class="section-title">폭염 및 휴게 정보</div><div class="fields">
+          <div class="field"><label>폭염 노출 시간</label><div class="time-pair"><input id="heatStart" type="time"><span>~</span><input id="heatEnd" type="time"></div></div>
+          <div class="field"><label for="temp">체감온도 (℃)</label><input id="temp" type="number" min="-20" max="60" step="0.1" placeholder="예: 33.5"></div>
+          <div class="field"><label>휴게 시간</label><div class="time-pair"><input id="restStart" type="time"><span>~</span><input id="restEnd" type="time"></div></div>
+          <div class="field"><label for="restMinutes">총 휴게시간 (분)</label><input id="restMinutes" type="number" min="0" step="1" placeholder="자동 계산 또는 직접 입력"></div>
+        </div></div>
+        <div class="section"><div class="section-title">조치 사항</div><div class="checks" id="measures">
+          <div class="check"><input id="m1" type="checkbox" value="시원한 물 제공"><label for="m1">시원한 물 제공</label></div><div class="check"><input id="m2" type="checkbox" value="그늘·냉방 휴게시설 이용"><label for="m2">그늘·냉방 휴게시설 이용</label></div><div class="check"><input id="m3" type="checkbox" value="작업시간 조정"><label for="m3">작업시간 조정</label></div><div class="check"><input id="m4" type="checkbox" value="작업강도 완화"><label for="m4">작업강도 완화</label></div><div class="check"><input id="m5" type="checkbox" value="건강상태 확인"><label for="m5">건강상태 확인</label></div><div class="check"><input id="m6" type="checkbox" value="작업 중지·대피"><label for="m6">작업 중지·대피</label></div>
+          <div class="field full"><label for="detail">상세 조치 및 특이사항</label><textarea id="detail" placeholder="예: 14시부터 2시간마다 20분 휴식, 작업자 이상 증상 없음"></textarea></div>
+        </div></div>
+        <div class="actions"><button class="btn primary" type="submit" id="submitBtn">기록 저장</button><button class="btn secondary" type="button" id="resetBtn">입력 초기화</button></div>
+      </form>
+    </section>
+    <aside class="card"><h2>저장된 기록</h2><div class="summary"><div class="metric"><b id="count">0</b><span>전체 기록</span></div><div class="metric"><b id="hotCount">0</b><span>33℃ 이상</span></div><div class="metric"><b id="restTotal">0분</b><span>누적 휴게</span></div></div><div class="records" id="records"></div>
+      <div class="export"><button class="btn primary" id="txtBtn">텍스트 파일 받기</button><button class="btn secondary" id="csvBtn">CSV 파일 받기</button><button class="btn ghost" id="printBtn">인쇄 / PDF</button><button class="btn ghost danger" id="clearBtn">전체 기록 삭제</button></div><p class="notice">기록은 서버로 전송되지 않고 현재 브라우저에만 저장됩니다. 다른 PC로 옮기거나 브라우저 기록을 지우기 전에는 텍스트 또는 CSV 파일로 백업하세요.</p>
+    </aside>
+  </div>
+</main><div class="toast" id="toast"></div>
+<script>
+const KEY='heat-safety-log-v1'; let logs=[]; let editingId=null;
+const $=id=>document.getElementById(id); const form=$('logForm');
+const ids=['date','site','place','workStart','workEnd','worker','heatStart','heatEnd','temp','restStart','restEnd','restMinutes','detail'];
+function safeLoad(){try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){return[]}}
+function persist(){localStorage.setItem(KEY,JSON.stringify(logs))}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function minutes(a,b){if(!a||!b)return '';let [ah,am]=a.split(':').map(Number),[bh,bm]=b.split(':').map(Number),n=(bh*60+bm)-(ah*60+am);if(n<0)n+=1440;return n}
+function level(t){t=Number(t);if(!Number.isFinite(t))return '미입력';if(t>=38)return '매우 위험';if(t>=35)return '위험';if(t>=33)return '주의';if(t>=31)return '관심';return '일반'}
+function toast(msg){const e=$('toast');e.textContent=msg;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1800)}
+function setDefaults(){form.reset();$('date').value=new Date().toISOString().slice(0,10);$('workStart').value='08:00';$('workEnd').value='17:00';editingId=null;$('formTitle').textContent='새 기록 작성';$('submitBtn').textContent='기록 저장'}
+function render(){logs.sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));$('count').textContent=logs.length;$('hotCount').textContent=logs.filter(x=>Number(x.temp)>=33).length;$('restTotal').textContent=logs.reduce((s,x)=>s+(Number(x.restMinutes)||0),0)+'분';
+ const box=$('records');if(!logs.length){box.innerHTML='<div class="empty">아직 저장된 기록이 없습니다.<br>왼쪽에서 첫 기록을 작성해 보세요.</div>';return}
+ box.innerHTML=logs.map(x=>`<article class="record"><div class="record-head"><h3>${esc(x.site)} · ${esc(x.date)}</h3><span class="badge">${esc(level(x.temp))}${x.temp!==''?' '+esc(x.temp)+'℃':''}</span></div><div class="record-meta">${esc(x.place||'장소 미입력')}<br>근무 ${esc(x.workStart)}~${esc(x.workEnd)} · 폭염 ${esc(x.heatStart||'-')}~${esc(x.heatEnd||'-')} · 휴게 ${esc(x.restMinutes||0)}분<br>${esc((x.measures||[]).join(', ')||'조치사항 미입력')}</div><div class="record-actions"><button onclick="editLog('${x.id}')">수정</button><button onclick="deleteLog('${x.id}')">삭제</button></div></article>`).join('')}
+form.addEventListener('submit',e=>{e.preventDefault();const data=Object.fromEntries(ids.map(id=>[id,$(id).value.trim()]));data.measures=[...document.querySelectorAll('#measures input[type=checkbox]:checked')].map(x=>x.value);data.id=editingId||String(Date.now());data.createdAt=editingId?(logs.find(x=>x.id===editingId)?.createdAt||new Date().toISOString()):new Date().toISOString();if(editingId)logs=logs.map(x=>x.id===editingId?data:x);else logs.push(data);persist();render();setDefaults();toast(editingId?'기록을 수정했습니다':'기록을 저장했습니다')});
+window.editLog=id=>{const x=logs.find(v=>v.id===id);if(!x)return;ids.forEach(k=>$(k).value=x[k]??'');document.querySelectorAll('#measures input[type=checkbox]').forEach(c=>c.checked=(x.measures||[]).includes(c.value));editingId=id;$('formTitle').textContent='기록 수정';$('submitBtn').textContent='수정 저장';window.scrollTo({top:0,behavior:'smooth'})};
+window.deleteLog=id=>{if(!confirm('이 기록을 삭제할까요?'))return;logs=logs.filter(x=>x.id!==id);persist();render();toast('기록을 삭제했습니다')};
+$('restEnd').addEventListener('change',()=>{const n=minutes($('restStart').value,$('restEnd').value);if(n!=='')$('restMinutes').value=n});$('restStart').addEventListener('change',()=>{const n=minutes($('restStart').value,$('restEnd').value);if(n!=='')$('restMinutes').value=n});$('resetBtn').onclick=setDefaults;
+function download(name,content,type){const blob=new Blob(['\ufeff'+content],{type:type+';charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function stamp(){return new Date().toISOString().slice(0,10)}
+$('txtBtn').onclick=()=>{if(!logs.length)return toast('내보낼 기록이 없습니다');const body=logs.map((x,i)=>`[${i+1}] ${x.date} / ${x.site}\n작업 장소: ${x.place||'-'}\n작성자·인원: ${x.worker||'-'}\n근무 시간: ${x.workStart} ~ ${x.workEnd}\n폭염 시간: ${x.heatStart||'-'} ~ ${x.heatEnd||'-'}\n체감온도: ${x.temp||'-'}℃ (${level(x.temp)})\n휴게 시간: ${x.restStart||'-'} ~ ${x.restEnd||'-'} / 총 ${x.restMinutes||0}분\n조치 사항: ${(x.measures||[]).join(', ')||'-'}\n상세 내용: ${x.detail||'-'}\n`).join('\n------------------------------\n\n');download(`폭염_조치기록_${stamp()}.txt`,'현장 폭염 조치 기록\n==============================\n\n'+body,'text/plain')};
+function csv(v){return '"'+String(v??'').replace(/"/g,'""')+'"'}
+$('csvBtn').onclick=()=>{if(!logs.length)return toast('내보낼 기록이 없습니다');const head=['날짜','현장명','작업장소','근무시작','근무종료','작성자·인원','폭염시작','폭염종료','체감온도','단계','휴게시작','휴게종료','총휴게시간(분)','조치사항','상세내용'];const rows=logs.map(x=>[x.date,x.site,x.place,x.workStart,x.workEnd,x.worker,x.heatStart,x.heatEnd,x.temp,level(x.temp),x.restStart,x.restEnd,x.restMinutes,(x.measures||[]).join(' / '),x.detail]);download(`폭염_조치기록_${stamp()}.csv`,[head,...rows].map(r=>r.map(csv).join(',')).join('\r\n'),'text/csv')};
+$('printBtn').onclick=()=>window.print();$('clearBtn').onclick=()=>{if(!logs.length)return;if(!confirm('저장된 모든 기록을 삭제할까요? 이 작업은 되돌릴 수 없습니다.'))return;logs=[];persist();render();toast('모든 기록을 삭제했습니다')};
+logs=safeLoad();setDefaults();render();
+</script>
+</body></html>
