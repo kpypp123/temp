@@ -294,10 +294,12 @@ if cell is None:
 def delete_record(record_id: str) -> None:
     worksheet = get_worksheet()
     ensure_headers(worksheet)
-    try:
-        cell = worksheet.find(record_id, in_column=1)
-    except CellNotFound as exc:
-        raise ValueError("삭제할 기록을 찾지 못했습니다. 목록을 새로고침해 주세요.") from exc
+cell = worksheet.find(record_id, in_column=1)
+
+if cell is None:
+    raise ValueError(
+        "삭제할 기록을 찾지 못했습니다. 목록을 새로고침해 주세요."
+    )
     worksheet.delete_rows(cell.row)
 
 
