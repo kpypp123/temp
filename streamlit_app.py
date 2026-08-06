@@ -14,7 +14,9 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
+APP_VERSION = "빠른 시간 기록 v2 · 2026-08-07"
 WORKSHEET_DEFAULT = "records"
+SPREADSHEET_URL_FALLBACK = "https://docs.google.com/spreadsheets/d/18c-qnfPmGG25qyAM497R7czDw3F7J7WRKmdLX3IGtY0"
 KST = ZoneInfo("Asia/Seoul")
 
 COLUMNS = [
@@ -45,6 +47,14 @@ MEASURE_OPTIONS = [
     "냉방기 가동 25도 이하",
     "제작팀 협의 조정",
 ]
+TIME_FIELD_COLUMNS = {
+    "work_start": "근무시작",
+    "work_end": "근무종료",
+    "heat_start": "폭염시작",
+    "heat_end": "폭염종료",
+    "rest_start": "휴게시작",
+    "rest_end": "휴게종료",
+}
 
 
 st.set_page_config(
@@ -113,6 +123,37 @@ st.markdown(
         font-size: 0.78rem;
         margin: -0.2rem 0 0.65rem;
     }
+
+    .version-badge {
+        display: inline-block;
+        margin: 0.15rem 0 0.9rem;
+        padding: 0.28rem 0.58rem;
+        border-radius: 999px;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 0.75rem;
+        font-weight: 800;
+    }
+    .quick-time-summary {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.5rem;
+        margin: 0.55rem 0 0.8rem;
+    }
+    .quick-time-card {
+        background: #f6faf7;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 0.65rem 0.72rem;
+        font-size: 0.8rem;
+        line-height: 1.45;
+    }
+    .quick-time-card b {
+        display: block;
+        color: var(--green);
+        font-size: 0.74rem;
+        margin-bottom: 0.15rem;
+    }
     .metric-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -157,10 +198,11 @@ st.markdown(
             padding-right: 0.78rem;
             padding-top: 0.8rem;
         }
-        .metric-grid {
+        .metric-grid, .quick-time-summary {
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }
-        .metric-grid .metric-card:last-child {
+        .metric-grid .metric-card:last-child,
+        .quick-time-summary .quick-time-card:last-child {
             grid-column: 1 / -1;
         }
     }
@@ -230,6 +272,57 @@ def get_secret(path: tuple[str, ...], default: str = "") -> str:
         return clean_text(current)
     except (KeyError, TypeError):
         return default
+
+
+def time_state_key(field: str, nonce: int) -> str:
+    return f"time_{field}_{nonce}"
+
+
+def initialize_time_state(editing_record: dict[str, Any], nonce: int) -> None:
+    for field, column in TIME_FIELD_COLUMNS.items():
+        key = time_state_key(field, nonce)
+        if key not in st.session_state:
+            st.session_state[key] = parse_time_value(editing_record.get(column))
+
+
+def set_time_now(field: str, nonce: int) -> None:
+    st.session_state[time_state_key(field, nonce)] = (
+        datetime.now(KST).time().replace(second=0, microsecond=0)
+    )
+
+
+def clear_time(field: str, nonce: int) -> None:
+    st.session_state[time_state_key(field, nonce)] = None
+
+
+def time_state_text(field: str, nonce: int) -> str:
+    return format_time_value(st.session_state.get(time_state_key(field, nonce)))
+
+
+def render_time_summary(nonce: int) -> None:
+    work_start = time_state_text("work_start", nonce)
+    work_end = time_state_text("work_end", nonce)
+    heat_start = time_state_text("heat_start", nonce)
+    heat_end = time_state_text("heat_end", nonce)
+    rest_start = time_state_text("rest_start", nonce)
+    rest_end = time_state_text("rest_end", nonce)
+
+    work_text = f"{work_start or '-'} ~ {work_end or '-'}"
+    heat_text = f"{heat_start or '-'} ~ {heat_end or '-'}"
+    rest_text = f"{rest_start or '-'} ~ {rest_end or '-'}"
+    if rest_start and rest_end:
+        rest_text += f" · {calculate_minutes(rest_start, rest_end)}분"
+
+    st.markdown(
+        f"""
+        <div class="quick-time-summary">
+            <div class="quick-time-card"><b>근무 시간</b>{work_text}</div>
+            <div class="quick-time-card"><b>폭염 노출</b>{heat_text}</div>
+            <div class="quick-time-card"><b>휴게 시간</b>{rest_text}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_resource(show_spinner=False)
@@ -403,10 +496,11 @@ def show_flash() -> None:
 
 def render_header() -> None:
     st.markdown(
-        """
+        f"""
         <div class="app-eyebrow">HEAT SAFETY LOG</div>
         <h1 class="app-title">현장 폭염 조치 기록</h1>
         <p class="app-subtitle">모바일에서 현장 조치와 휴게 내역을 기록하고 Google Sheets에 공동 저장합니다.</p>
+        <div class="version-badge">{APP_VERSION}</div>
         """,
         unsafe_allow_html=True,
     )
@@ -460,13 +554,14 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         else:
             st.warning("수정하려던 기록을 찾지 못해 새 기록 화면으로 전환했습니다.")
             reset_form(go_to_form=True)
-            editing_id = ""
+            st.rerun()
 
     title = "기록 수정" if editing_id else "새 기록 작성"
     st.subheader(title)
     nonce = st.session_state.form_nonce
+    initialize_time_state(editing_record, nonce)
 
-    default_date = date.today()
+    default_date = datetime.now(KST).date()
     date_text = clean_text(editing_record.get("작업날짜"))
     if date_text:
         try:
@@ -480,11 +575,14 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         team_options.append(current_team)
 
     temperature_default = parse_float(editing_record.get("체감온도"))
-    rest_minutes_default = max(parse_int(editing_record.get("휴게시간"), 0), 0)
 
-    with st.form(f"record_form_{nonce}", border=True):
+    with st.container(border=True):
         st.markdown("#### 기본 정보")
-        work_date = st.date_input("작업 날짜 *", value=default_date, key=f"date_{nonce}")
+        work_date = st.date_input(
+            "작업 날짜 *",
+            value=default_date,
+            key=f"date_{nonce}",
+        )
         site = st.text_input(
             "현장명 *",
             value=clean_text(editing_record.get("현장명")),
@@ -497,24 +595,6 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             index=option_index(team_options, current_team, 0),
             key=f"team_{nonce}",
         )
-
-        st.markdown("**근무 시간**")
-        work_left, work_right = st.columns(2)
-        with work_left:
-            work_start = st.time_input(
-                "시작",
-                value=parse_time_value(editing_record.get("근무시작"), time(8, 0)),
-                step=timedelta(minutes=10),
-                key=f"work_start_{nonce}",
-            )
-        with work_right:
-            work_end = st.time_input(
-                "종료",
-                value=parse_time_value(editing_record.get("근무종료"), time(17, 0)),
-                step=timedelta(minutes=10),
-                key=f"work_end_{nonce}",
-            )
-
         author = st.text_input(
             "작성자",
             value=clean_text(editing_record.get("작성자")),
@@ -523,29 +603,141 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
         )
 
         st.divider()
-        st.markdown("#### 폭염 및 휴게 정보")
+        st.markdown("#### 빠른 시간 기록")
+        st.caption("장비를 들고 있어도 해당 버튼을 한 번 누르면 현재 한국 시간이 기록됩니다.")
 
-        st.markdown("**폭염 노출 시간**")
+        work_left, work_right = st.columns(2)
+        with work_left:
+            st.button(
+                "▶ 근무 시작",
+                key=f"quick_work_start_{nonce}",
+                use_container_width=True,
+                on_click=set_time_now,
+                args=("work_start", nonce),
+            )
+        with work_right:
+            st.button(
+                "■ 근무 종료",
+                key=f"quick_work_end_{nonce}",
+                use_container_width=True,
+                on_click=set_time_now,
+                args=("work_end", nonce),
+            )
+
         heat_left, heat_right = st.columns(2)
         with heat_left:
-            heat_start = st.time_input(
-                "시작",
-                value=parse_time_value(editing_record.get("폭염시작")),
-                step=timedelta(minutes=10),
-                key=f"heat_start_{nonce}",
+            st.button(
+                "☀️ 폭염 시작",
+                key=f"quick_heat_start_{nonce}",
+                use_container_width=True,
+                on_click=set_time_now,
+                args=("heat_start", nonce),
             )
         with heat_right:
-            heat_end = st.time_input(
-                "종료",
-                value=parse_time_value(editing_record.get("폭염종료")),
-                step=timedelta(minutes=10),
-                key=f"heat_end_{nonce}",
+            st.button(
+                "🌤️ 폭염 종료",
+                key=f"quick_heat_end_{nonce}",
+                use_container_width=True,
+                on_click=set_time_now,
+                args=("heat_end", nonce),
             )
-        st.markdown(
-            '<div class="time-help">입력하지 않을 경우 비워두면 됩니다.</div>',
-            unsafe_allow_html=True,
-        )
 
+        rest_left, rest_right = st.columns(2)
+        with rest_left:
+            st.button(
+                "☕ 휴게 시작",
+                key=f"quick_rest_start_{nonce}",
+                use_container_width=True,
+                on_click=set_time_now,
+                args=("rest_start", nonce),
+            )
+        with rest_right:
+            st.button(
+                "✅ 휴게 종료",
+                key=f"quick_rest_end_{nonce}",
+                use_container_width=True,
+                on_click=set_time_now,
+                args=("rest_end", nonce),
+            )
+
+        render_time_summary(nonce)
+        st.caption("버튼으로 기록한 시간은 아래 '기록 저장'을 눌러야 Google Sheets에 저장됩니다.")
+
+        with st.expander("시간 직접 수정", expanded=False):
+            st.caption("빠른 기록이 잘못됐을 때만 수정하세요.")
+
+            direct_work_left, direct_work_right = st.columns(2)
+            with direct_work_left:
+                work_start = st.time_input(
+                    "근무 시작",
+                    key=time_state_key("work_start", nonce),
+                    step=timedelta(minutes=1),
+                )
+            with direct_work_right:
+                work_end = st.time_input(
+                    "근무 종료",
+                    key=time_state_key("work_end", nonce),
+                    step=timedelta(minutes=1),
+                )
+
+            direct_heat_left, direct_heat_right = st.columns(2)
+            with direct_heat_left:
+                heat_start = st.time_input(
+                    "폭염 시작",
+                    key=time_state_key("heat_start", nonce),
+                    step=timedelta(minutes=1),
+                )
+                st.button(
+                    "폭염 시작 지우기",
+                    key=f"clear_heat_start_{nonce}",
+                    use_container_width=True,
+                    on_click=clear_time,
+                    args=("heat_start", nonce),
+                )
+            with direct_heat_right:
+                heat_end = st.time_input(
+                    "폭염 종료",
+                    key=time_state_key("heat_end", nonce),
+                    step=timedelta(minutes=1),
+                )
+                st.button(
+                    "폭염 종료 지우기",
+                    key=f"clear_heat_end_{nonce}",
+                    use_container_width=True,
+                    on_click=clear_time,
+                    args=("heat_end", nonce),
+                )
+
+            direct_rest_left, direct_rest_right = st.columns(2)
+            with direct_rest_left:
+                rest_start = st.time_input(
+                    "휴게 시작",
+                    key=time_state_key("rest_start", nonce),
+                    step=timedelta(minutes=1),
+                )
+                st.button(
+                    "휴게 시작 지우기",
+                    key=f"clear_rest_start_{nonce}",
+                    use_container_width=True,
+                    on_click=clear_time,
+                    args=("rest_start", nonce),
+                )
+            with direct_rest_right:
+                rest_end = st.time_input(
+                    "휴게 종료",
+                    key=time_state_key("rest_end", nonce),
+                    step=timedelta(minutes=1),
+                )
+                st.button(
+                    "휴게 종료 지우기",
+                    key=f"clear_rest_end_{nonce}",
+                    use_container_width=True,
+                    on_click=clear_time,
+                    args=("rest_end", nonce),
+                )
+
+        st.divider()
+        st.markdown("#### 폭염 정보")
         temperature = st.number_input(
             "체감온도 (℃)",
             min_value=-20.0,
@@ -554,32 +746,6 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             value=temperature_default,
             placeholder="예: 33.5",
             key=f"temperature_{nonce}",
-        )
-
-        st.markdown("**휴게 시간**")
-        rest_left, rest_right = st.columns(2)
-        with rest_left:
-            rest_start = st.time_input(
-                "시작",
-                value=parse_time_value(editing_record.get("휴게시작")),
-                step=timedelta(minutes=5),
-                key=f"rest_start_{nonce}",
-            )
-        with rest_right:
-            rest_end = st.time_input(
-                "종료",
-                value=parse_time_value(editing_record.get("휴게종료")),
-                step=timedelta(minutes=5),
-                key=f"rest_end_{nonce}",
-            )
-
-        rest_minutes = st.number_input(
-            "총 휴게시간 (분)",
-            min_value=0,
-            step=1,
-            value=rest_minutes_default,
-            help="0으로 두면 휴게 시작·종료 시간을 기준으로 자동 계산합니다.",
-            key=f"rest_minutes_{nonce}",
         )
 
         st.divider()
@@ -598,30 +764,27 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
             key=f"notes_{nonce}",
         )
 
-        save_clicked = st.form_submit_button(
-            "수정 내용 저장" if editing_id else "기록 저장",
-            use_container_width=True,
-            type="primary",
-            disabled=store_error is not None,
-        )
-        reset_clicked = st.form_submit_button("입력 초기화", use_container_width=True)
+        save_col, reset_col = st.columns(2)
+        with save_col:
+            save_clicked = st.button(
+                "수정 내용 저장" if editing_id else "기록 저장",
+                key=f"save_record_{nonce}",
+                use_container_width=True,
+                type="primary",
+                disabled=store_error is not None,
+            )
+        with reset_col:
+            reset_clicked = st.button(
+                "입력 초기화",
+                key=f"reset_record_{nonce}",
+                use_container_width=True,
+            )
 
     if reset_clicked:
         reset_form(go_to_form=True)
         st.rerun()
 
     if not save_clicked:
-        return
-
-    validation_errors: list[str] = []
-    if not site.strip():
-        validation_errors.append("현장명을 입력해 주세요.")
-    if work_start is None or work_end is None:
-        validation_errors.append("근무 시작과 종료 시간을 입력해 주세요.")
-
-    if validation_errors:
-        for message in validation_errors:
-            st.error(message)
         return
 
     work_start_text = format_time_value(work_start)
@@ -631,9 +794,22 @@ def render_form(records: pd.DataFrame, store_error: Exception | None) -> None:
     rest_start_text = format_time_value(rest_start)
     rest_end_text = format_time_value(rest_end)
 
-    calculated_rest_minutes = int(rest_minutes)
-    if calculated_rest_minutes == 0:
-        calculated_rest_minutes = calculate_minutes(rest_start_text, rest_end_text)
+    validation_errors: list[str] = []
+    if not site.strip():
+        validation_errors.append("현장명을 입력해 주세요.")
+    if not work_start_text or not work_end_text:
+        validation_errors.append("근무 시작과 종료 시간을 기록해 주세요.")
+    if bool(heat_start_text) != bool(heat_end_text):
+        validation_errors.append("폭염 노출 시간은 시작과 종료를 모두 입력하거나 모두 비워 주세요.")
+    if bool(rest_start_text) != bool(rest_end_text):
+        validation_errors.append("휴게 시간은 시작과 종료를 모두 입력하거나 모두 비워 주세요.")
+
+    if validation_errors:
+        for message in validation_errors:
+            st.error(message)
+        return
+
+    calculated_rest_minutes = calculate_minutes(rest_start_text, rest_end_text)
 
     now_text = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
     created_at = clean_text(editing_record.get("등록시간")) or now_text
@@ -697,6 +873,13 @@ def render_metrics(records: pd.DataFrame) -> None:
 
 def render_records(records: pd.DataFrame, store_error: Exception | None) -> None:
     st.subheader("저장된 기록")
+    spreadsheet_url = get_secret(("app", "spreadsheet_url"), SPREADSHEET_URL_FALLBACK)
+    st.link_button(
+        "📊 Google Sheets에서 기록 열기",
+        spreadsheet_url,
+        use_container_width=True,
+    )
+
     if store_error is not None:
         st.info("Google Sheets 연결이 완료되면 공동 기록이 여기에 표시됩니다.")
         return
