@@ -26,18 +26,18 @@
         <div class="section"><div class="section-title">기본 정보</div><div class="fields">
           <div class="field"><label for="date">작업 날짜 *</label><input id="date" type="date" required></div>
           <div class="field"><label for="site">현장명 *</label><input id="site" placeholder="예: ○○공사 현장" required></div>
-          <div class="field full"><label for="place">작업 장소</label><input id="place" placeholder="예: 옥외 자재 적재장"></div>
+          <div class="field full"><label for="team">팀 선택 *</label><select id="team" required><option value="">팀을 선택하세요</option><option value="중계팀">중계팀</option><option value="영상팀">영상팀</option></select></div>
           <div class="field"><label>근무 시간 *</label><div class="time-pair"><input id="workStart" type="time" required><span>~</span><input id="workEnd" type="time" required></div></div>
           <div class="field"><label for="worker">작성자 / 작업 인원</label><input id="worker" placeholder="예: 홍길동 / 8명"></div>
         </div></div>
         <div class="section"><div class="section-title">폭염 및 휴게 정보</div><div class="fields">
-          <div class="field"><label>폭염 노출 시간</label><div class="time-pair"><input id="heatStart" type="time"><span>~</span><input id="heatEnd" type="time"></div></div>
+          <div class="field"><label>폭염 노출 시간 (시 단위)</label><div class="time-pair"><select id="heatStart" aria-label="폭염 시작 시간"></select><span>~</span><select id="heatEnd" aria-label="폭염 종료 시간"></select></div></div>
           <div class="field"><label for="temp">체감온도 (℃)</label><input id="temp" type="number" min="-20" max="60" step="0.1" placeholder="예: 33.5"></div>
           <div class="field"><label>휴게 시간</label><div class="time-pair"><input id="restStart" type="time"><span>~</span><input id="restEnd" type="time"></div></div>
           <div class="field"><label for="restMinutes">총 휴게시간 (분)</label><input id="restMinutes" type="number" min="0" step="1" placeholder="자동 계산 또는 직접 입력"></div>
         </div></div>
         <div class="section"><div class="section-title">조치 사항</div><div class="checks" id="measures">
-          <div class="check"><input id="m1" type="checkbox" value="시원한 물 제공"><label for="m1">시원한 물 제공</label></div><div class="check"><input id="m2" type="checkbox" value="그늘·냉방 휴게시설 이용"><label for="m2">그늘·냉방 휴게시설 이용</label></div><div class="check"><input id="m3" type="checkbox" value="작업시간 조정"><label for="m3">작업시간 조정</label></div><div class="check"><input id="m4" type="checkbox" value="작업강도 완화"><label for="m4">작업강도 완화</label></div><div class="check"><input id="m5" type="checkbox" value="건강상태 확인"><label for="m5">건강상태 확인</label></div><div class="check"><input id="m6" type="checkbox" value="작업 중지·대피"><label for="m6">작업 중지·대피</label></div>
+          <div class="check"><input id="m1" type="checkbox" value="1시간 근무 10분 휴식"><label for="m1">1시간 근무 10분 휴식</label></div><div class="check"><input id="m2" type="checkbox" value="2시간 근무 20분 휴식"><label for="m2">2시간 근무 20분 휴식</label></div><div class="check"><input id="m3" type="checkbox" value="냉방기 가동 25도 이하"><label for="m3">냉방기 가동 25도 이하</label></div><div class="check"><input id="m4" type="checkbox" value="제작팀 협의 조정"><label for="m4">제작팀 협의 조정</label></div>
           <div class="field full"><label for="detail">상세 조치 및 특이사항</label><textarea id="detail" placeholder="예: 14시부터 2시간마다 20분 휴식, 작업자 이상 증상 없음"></textarea></div>
         </div></div>
         <div class="actions"><button class="btn primary" type="submit" id="submitBtn">기록 저장</button><button class="btn secondary" type="button" id="resetBtn">입력 초기화</button></div>
@@ -51,27 +51,28 @@
 <script>
 const KEY='heat-safety-log-v1'; let logs=[]; let editingId=null;
 const $=id=>document.getElementById(id); const form=$('logForm');
-const ids=['date','site','place','workStart','workEnd','worker','heatStart','heatEnd','temp','restStart','restEnd','restMinutes','detail'];
-function safeLoad(){try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){return[]}}
+const ids=['date','site','team','workStart','workEnd','worker','heatStart','heatEnd','temp','restStart','restEnd','restMinutes','detail'];
+function safeLoad(){try{return JSON.parse(localStorage.getItem(KEY)||'[]').map(x=>({...x,team:x.team||x.place||''}))}catch(e){return[]}}
 function persist(){localStorage.setItem(KEY,JSON.stringify(logs))}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function minutes(a,b){if(!a||!b)return '';let [ah,am]=a.split(':').map(Number),[bh,bm]=b.split(':').map(Number),n=(bh*60+bm)-(ah*60+am);if(n<0)n+=1440;return n}
 function level(t){t=Number(t);if(!Number.isFinite(t))return '미입력';if(t>=38)return '매우 위험';if(t>=35)return '위험';if(t>=33)return '주의';if(t>=31)return '관심';return '일반'}
 function toast(msg){const e=$('toast');e.textContent=msg;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1800)}
+function initHourSelects(){['heatStart','heatEnd'].forEach(id=>{const s=$(id);s.innerHTML='<option value="">선택</option>'+Array.from({length:24},(_,h)=>`<option value="${String(h).padStart(2,'0')}시">${String(h).padStart(2,'0')}시</option>`).join('')})}
 function setDefaults(){form.reset();$('date').value=new Date().toISOString().slice(0,10);$('workStart').value='08:00';$('workEnd').value='17:00';editingId=null;$('formTitle').textContent='새 기록 작성';$('submitBtn').textContent='기록 저장'}
 function render(){logs.sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));$('count').textContent=logs.length;$('hotCount').textContent=logs.filter(x=>Number(x.temp)>=33).length;$('restTotal').textContent=logs.reduce((s,x)=>s+(Number(x.restMinutes)||0),0)+'분';
  const box=$('records');if(!logs.length){box.innerHTML='<div class="empty">아직 저장된 기록이 없습니다.<br>왼쪽에서 첫 기록을 작성해 보세요.</div>';return}
- box.innerHTML=logs.map(x=>`<article class="record"><div class="record-head"><h3>${esc(x.site)} · ${esc(x.date)}</h3><span class="badge">${esc(level(x.temp))}${x.temp!==''?' '+esc(x.temp)+'℃':''}</span></div><div class="record-meta">${esc(x.place||'장소 미입력')}<br>근무 ${esc(x.workStart)}~${esc(x.workEnd)} · 폭염 ${esc(x.heatStart||'-')}~${esc(x.heatEnd||'-')} · 휴게 ${esc(x.restMinutes||0)}분<br>${esc((x.measures||[]).join(', ')||'조치사항 미입력')}</div><div class="record-actions"><button onclick="editLog('${x.id}')">수정</button><button onclick="deleteLog('${x.id}')">삭제</button></div></article>`).join('')}
+ box.innerHTML=logs.map(x=>`<article class="record"><div class="record-head"><h3>${esc(x.site)} · ${esc(x.date)}</h3><span class="badge">${esc(level(x.temp))}${x.temp!==''?' '+esc(x.temp)+'℃':''}</span></div><div class="record-meta">${esc(x.team||'팀 미선택')}<br>근무 ${esc(x.workStart)}~${esc(x.workEnd)} · 폭염 ${esc(x.heatStart||'-')}~${esc(x.heatEnd||'-')} · 휴게 ${esc(x.restMinutes||0)}분<br>${esc((x.measures||[]).join(', ')||'조치사항 미입력')}</div><div class="record-actions"><button onclick="editLog('${x.id}')">수정</button><button onclick="deleteLog('${x.id}')">삭제</button></div></article>`).join('')}
 form.addEventListener('submit',e=>{e.preventDefault();const data=Object.fromEntries(ids.map(id=>[id,$(id).value.trim()]));data.measures=[...document.querySelectorAll('#measures input[type=checkbox]:checked')].map(x=>x.value);data.id=editingId||String(Date.now());data.createdAt=editingId?(logs.find(x=>x.id===editingId)?.createdAt||new Date().toISOString()):new Date().toISOString();if(editingId)logs=logs.map(x=>x.id===editingId?data:x);else logs.push(data);persist();render();setDefaults();toast(editingId?'기록을 수정했습니다':'기록을 저장했습니다')});
 window.editLog=id=>{const x=logs.find(v=>v.id===id);if(!x)return;ids.forEach(k=>$(k).value=x[k]??'');document.querySelectorAll('#measures input[type=checkbox]').forEach(c=>c.checked=(x.measures||[]).includes(c.value));editingId=id;$('formTitle').textContent='기록 수정';$('submitBtn').textContent='수정 저장';window.scrollTo({top:0,behavior:'smooth'})};
 window.deleteLog=id=>{if(!confirm('이 기록을 삭제할까요?'))return;logs=logs.filter(x=>x.id!==id);persist();render();toast('기록을 삭제했습니다')};
 $('restEnd').addEventListener('change',()=>{const n=minutes($('restStart').value,$('restEnd').value);if(n!=='')$('restMinutes').value=n});$('restStart').addEventListener('change',()=>{const n=minutes($('restStart').value,$('restEnd').value);if(n!=='')$('restMinutes').value=n});$('resetBtn').onclick=setDefaults;
 function download(name,content,type){const blob=new Blob(['\ufeff'+content],{type:type+';charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function stamp(){return new Date().toISOString().slice(0,10)}
-$('txtBtn').onclick=()=>{if(!logs.length)return toast('내보낼 기록이 없습니다');const body=logs.map((x,i)=>`[${i+1}] ${x.date} / ${x.site}\n작업 장소: ${x.place||'-'}\n작성자·인원: ${x.worker||'-'}\n근무 시간: ${x.workStart} ~ ${x.workEnd}\n폭염 시간: ${x.heatStart||'-'} ~ ${x.heatEnd||'-'}\n체감온도: ${x.temp||'-'}℃ (${level(x.temp)})\n휴게 시간: ${x.restStart||'-'} ~ ${x.restEnd||'-'} / 총 ${x.restMinutes||0}분\n조치 사항: ${(x.measures||[]).join(', ')||'-'}\n상세 내용: ${x.detail||'-'}\n`).join('\n------------------------------\n\n');download(`폭염_조치기록_${stamp()}.txt`,'현장 폭염 조치 기록\n==============================\n\n'+body,'text/plain')};
+$('txtBtn').onclick=()=>{if(!logs.length)return toast('내보낼 기록이 없습니다');const body=logs.map((x,i)=>`[${i+1}] ${x.date} / ${x.site}\n팀: ${x.team||'-'}\n작성자·인원: ${x.worker||'-'}\n근무 시간: ${x.workStart} ~ ${x.workEnd}\n폭염 시간: ${x.heatStart||'-'} ~ ${x.heatEnd||'-'}\n체감온도: ${x.temp||'-'}℃ (${level(x.temp)})\n휴게 시간: ${x.restStart||'-'} ~ ${x.restEnd||'-'} / 총 ${x.restMinutes||0}분\n조치 사항: ${(x.measures||[]).join(', ')||'-'}\n상세 내용: ${x.detail||'-'}\n`).join('\n------------------------------\n\n');download(`폭염_조치기록_${stamp()}.txt`,'현장 폭염 조치 기록\n==============================\n\n'+body,'text/plain')};
 function csv(v){return '"'+String(v??'').replace(/"/g,'""')+'"'}
-$('csvBtn').onclick=()=>{if(!logs.length)return toast('내보낼 기록이 없습니다');const head=['날짜','현장명','작업장소','근무시작','근무종료','작성자·인원','폭염시작','폭염종료','체감온도','단계','휴게시작','휴게종료','총휴게시간(분)','조치사항','상세내용'];const rows=logs.map(x=>[x.date,x.site,x.place,x.workStart,x.workEnd,x.worker,x.heatStart,x.heatEnd,x.temp,level(x.temp),x.restStart,x.restEnd,x.restMinutes,(x.measures||[]).join(' / '),x.detail]);download(`폭염_조치기록_${stamp()}.csv`,[head,...rows].map(r=>r.map(csv).join(',')).join('\r\n'),'text/csv')};
+$('csvBtn').onclick=()=>{if(!logs.length)return toast('내보낼 기록이 없습니다');const head=['날짜','현장명','팀','근무시작','근무종료','작성자·인원','폭염시작','폭염종료','체감온도','단계','휴게시작','휴게종료','총휴게시간(분)','조치사항','상세내용'];const rows=logs.map(x=>[x.date,x.site,x.team,x.workStart,x.workEnd,x.worker,x.heatStart,x.heatEnd,x.temp,level(x.temp),x.restStart,x.restEnd,x.restMinutes,(x.measures||[]).join(' / '),x.detail]);download(`폭염_조치기록_${stamp()}.csv`,[head,...rows].map(r=>r.map(csv).join(',')).join('\r\n'),'text/csv')};
 $('printBtn').onclick=()=>window.print();$('clearBtn').onclick=()=>{if(!logs.length)return;if(!confirm('저장된 모든 기록을 삭제할까요? 이 작업은 되돌릴 수 없습니다.'))return;logs=[];persist();render();toast('모든 기록을 삭제했습니다')};
-logs=safeLoad();setDefaults();render();
+initHourSelects();logs=safeLoad();setDefaults();render();
 </script>
 </body></html>
