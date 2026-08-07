@@ -15,7 +15,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.1 · 2026-08-07"
+APP_VERSION = "Professional UI v3.3 · 2026-08-07"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -58,8 +58,6 @@ TIME_FIELD_COLUMNS = {
     "work_end": "근무종료",
     "heat_start": "폭염시작",
     "heat_end": "폭염종료",
-    "rest_start": "휴게시작",
-    "rest_end": "휴게종료",
 }
 
 
@@ -579,6 +577,32 @@ def time_state_text(field: str, nonce: int) -> str:
     )
 
 
+def rest_minutes_key(nonce: int) -> str:
+    return f"rest_minutes_{nonce}"
+
+
+def initialize_rest_minutes(
+    editing_record: dict[str, Any],
+    nonce: int,
+) -> None:
+    key = rest_minutes_key(nonce)
+    if key not in st.session_state:
+        st.session_state[key] = max(
+            0,
+            parse_int(editing_record.get("휴게시간"), 0),
+        )
+
+
+def add_rest_minutes(minutes: int, nonce: int) -> None:
+    key = rest_minutes_key(nonce)
+    current = parse_int(st.session_state.get(key), 0)
+    st.session_state[key] = max(0, current + minutes)
+
+
+def clear_rest_minutes(nonce: int) -> None:
+    st.session_state[rest_minutes_key(nonce)] = 0
+
+
 def calculate_minutes(start: str, end: str) -> int:
     if not start or not end:
         return 0
@@ -600,17 +624,14 @@ def render_time_summary(nonce: int) -> None:
     work_end = time_state_text("work_end", nonce)
     heat_start = time_state_text("heat_start", nonce)
     heat_end = time_state_text("heat_end", nonce)
-    rest_start = time_state_text("rest_start", nonce)
-    rest_end = time_state_text("rest_end", nonce)
+    rest_minutes = parse_int(
+        st.session_state.get(rest_minutes_key(nonce)),
+        0,
+    )
 
     work_text = f"{work_start or '-'} ~ {work_end or '-'}"
     heat_text = f"{heat_start or '-'} ~ {heat_end or '-'}"
-    rest_text = f"{rest_start or '-'} ~ {rest_end or '-'}"
-
-    if rest_start and rest_end:
-        rest_text += (
-            f" · {calculate_minutes(rest_start, rest_end)}분"
-        )
+    rest_text = f"{rest_minutes}분" if rest_minutes > 0 else "-"
 
     st.markdown(
         f"""
@@ -624,7 +645,7 @@ def render_time_summary(nonce: int) -> None:
                 <strong>{html.escape(heat_text)}</strong>
             </div>
             <div class="quick-time-card">
-                <span>휴게 시간</span>
+                <span>누적 휴게시간</span>
                 <strong>{html.escape(rest_text)}</strong>
             </div>
         </div>
@@ -1006,6 +1027,7 @@ def render_form(
 
     nonce = st.session_state.form_nonce
     initialize_time_state(editing_record, nonce)
+    initialize_rest_minutes(editing_record, nonce)
 
     default_date = datetime.now(KST).date()
     date_text = clean_text(
@@ -1018,16 +1040,14 @@ def render_form(
         except ValueError:
             pass
 
-    team_options = TEAM_OPTIONS.copy()
     current_team = clean_text(
         editing_record.get("팀")
     )
-
-    if (
+    team_default = (
         current_team
-        and current_team not in team_options
-    ):
-        team_options.append(current_team)
+        if current_team in TEAM_OPTIONS
+        else TEAM_OPTIONS[0]
+    )
 
     temperature_default = clean_text(
         editing_record.get("체감온도")
@@ -1055,14 +1075,12 @@ def render_form(
             key=f"site_{nonce}",
         )
 
-        team = st.selectbox(
+        team = st.segmented_control(
             "팀 선택 *",
-            options=team_options,
-            index=option_index(
-                team_options,
-                current_team,
-                0,
-            ),
+            options=TEAM_OPTIONS,
+            selection_mode="single",
+            default=team_default,
+            format_func=lambda option: option.replace("팀", ""),
             key=f"team_{nonce}",
         )
 
@@ -1129,25 +1147,45 @@ def render_form(
                 args=("heat_end", nonce),
             )
 
-        rest_left, rest_right = st.columns(2)
+        st.markdown("**휴게시간 누적**")
+        st.caption("휴게할 때마다 해당 시간을 눌러 누적합니다.")
 
-        with rest_left:
+        rest_10, rest_20, rest_30 = st.columns(3)
+
+        with rest_10:
             st.button(
-                "휴게 시작 기록",
-                key=f"quick_rest_start_{nonce}",
+                "+10분",
+                key=f"add_rest_10_{nonce}",
                 use_container_width=True,
-                on_click=set_time_now,
-                args=("rest_start", nonce),
+                on_click=add_rest_minutes,
+                args=(10, nonce),
             )
 
-        with rest_right:
+        with rest_20:
             st.button(
-                "휴게 종료 기록",
-                key=f"quick_rest_end_{nonce}",
+                "+20분",
+                key=f"add_rest_20_{nonce}",
                 use_container_width=True,
-                on_click=set_time_now,
-                args=("rest_end", nonce),
+                on_click=add_rest_minutes,
+                args=(20, nonce),
             )
+
+        with rest_30:
+            st.button(
+                "+30분",
+                key=f"add_rest_30_{nonce}",
+                use_container_width=True,
+                on_click=add_rest_minutes,
+                args=(30, nonce),
+            )
+
+        st.button(
+            "휴게시간 초기화",
+            key=f"clear_rest_minutes_{nonce}",
+            use_container_width=True,
+            on_click=clear_rest_minutes,
+            args=(nonce,),
+        )
 
         render_time_summary(nonce)
 
@@ -1157,11 +1195,11 @@ def render_form(
         )
 
         with st.expander(
-            "시간 직접 수정",
+            "근무·폭염 시간 직접 수정",
             expanded=False,
         ):
             st.caption(
-                "필요한 경우에만 시간을 직접 "
+                "필요한 경우 근무·폭염 시간만 직접 "
                 "수정하거나 초기화합니다."
             )
 
@@ -1225,44 +1263,6 @@ def render_form(
                     use_container_width=True,
                     on_click=clear_time,
                     args=("heat_end", nonce),
-                )
-
-            direct_rest_left, direct_rest_right = (
-                st.columns(2)
-            )
-
-            with direct_rest_left:
-                rest_start = st.time_input(
-                    "휴게 시작",
-                    key=time_state_key(
-                        "rest_start",
-                        nonce,
-                    ),
-                    step=timedelta(minutes=1),
-                )
-                st.button(
-                    "휴게 시작 지우기",
-                    key=f"clear_rest_start_{nonce}",
-                    use_container_width=True,
-                    on_click=clear_time,
-                    args=("rest_start", nonce),
-                )
-
-            with direct_rest_right:
-                rest_end = st.time_input(
-                    "휴게 종료",
-                    key=time_state_key(
-                        "rest_end",
-                        nonce,
-                    ),
-                    step=timedelta(minutes=1),
-                )
-                st.button(
-                    "휴게 종료 지우기",
-                    key=f"clear_rest_end_{nonce}",
-                    use_container_width=True,
-                    on_click=clear_time,
-                    args=("rest_end", nonce),
                 )
 
         st.divider()
@@ -1353,8 +1353,13 @@ def render_form(
     work_end_text = format_time_value(work_end)
     heat_start_text = format_time_value(heat_start)
     heat_end_text = format_time_value(heat_end)
-    rest_start_text = format_time_value(rest_start)
-    rest_end_text = format_time_value(rest_end)
+    rest_minutes = max(
+        0,
+        parse_int(
+            st.session_state.get(rest_minutes_key(nonce)),
+            0,
+        ),
+    )
 
     validation_errors: list[str] = []
 
@@ -1374,12 +1379,6 @@ def render_form(
             "모두 입력하거나 모두 비워 주세요."
         )
 
-    if bool(rest_start_text) != bool(rest_end_text):
-        validation_errors.append(
-            "휴게 시간은 시작과 종료를 "
-            "모두 입력하거나 모두 비워 주세요."
-        )
-
     normalized_temperature, temperature_error = (
         normalize_temperature_text(temperature)
     )
@@ -1391,11 +1390,6 @@ def render_form(
         for message in validation_errors:
             st.error(message)
         return
-
-    calculated_rest_minutes = calculate_minutes(
-        rest_start_text,
-        rest_end_text,
-    )
 
     now_text = datetime.now(KST).strftime(
         "%Y-%m-%d %H:%M:%S"
@@ -1420,9 +1414,17 @@ def render_form(
         "폭염시작": heat_start_text,
         "폭염종료": heat_end_text,
         "체감온도": normalized_temperature,
-        "휴게시작": rest_start_text,
-        "휴게종료": rest_end_text,
-        "휴게시간": str(calculated_rest_minutes),
+        "휴게시작": (
+            clean_text(editing_record.get("휴게시작"))
+            if editing_id
+            else ""
+        ),
+        "휴게종료": (
+            clean_text(editing_record.get("휴게종료"))
+            if editing_id
+            else ""
+        ),
+        "휴게시간": str(rest_minutes),
         "조치사항": " | ".join(measures),
         "특이사항": notes.strip(),
         "등록시간": created_at,
@@ -1655,11 +1657,14 @@ def render_records(
                 " ~ "
                 f"{clean_text(record.get('폭염종료')) or '-'}"
             )
+            rest_minutes_value = parse_int(
+                record.get("휴게시간"),
+                0,
+            )
             rest_time_text = (
-                f"{clean_text(record.get('휴게시작')) or '-'}"
-                " ~ "
-                f"{clean_text(record.get('휴게종료')) or '-'} "
-                f"({parse_int(record.get('휴게시간'), 0)}분)"
+                f"{rest_minutes_value}분"
+                if rest_minutes_value > 0
+                else "-"
             )
 
             st.markdown(f"### {site}")
