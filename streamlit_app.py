@@ -211,13 +211,21 @@ st.markdown(
     div.stButton > button,
     div[data-testid="stDownloadButton"] > button,
     div[data-testid="stLinkButton"] a {
-        min-height: 2.8rem;
-        border-radius: 7px;
+        min-height: 3.35rem;
+        border-radius: 9px;
         border: 1px solid var(--line-strong);
         background: var(--surface);
         color: var(--ink);
-        font-weight: 680;
+        font-size: 1rem;
+        font-weight: 720;
         box-shadow: none;
+    }
+
+    .field-label {
+        color: #344054;
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin: 0.15rem 0 0.45rem;
     }
 
     div.stButton > button[kind="primary"] {
@@ -381,6 +389,13 @@ st.markdown(
 
         div[data-testid="stVerticalBlockBorderWrapper"] > div {
             padding: 0.9rem;
+        }
+
+        div.stButton > button,
+        div[data-testid="stDownloadButton"] > button,
+        div[data-testid="stLinkButton"] a {
+            min-height: 3.6rem;
+            font-size: 1.03rem;
         }
     }
     </style>
@@ -575,6 +590,59 @@ def time_state_text(field: str, nonce: int) -> str:
     return format_time_value(
         st.session_state.get(time_state_key(field, nonce))
     )
+
+
+def team_state_key(nonce: int) -> str:
+    return f"selected_team_{nonce}"
+
+
+def initialize_team_state(
+    editing_record: dict[str, Any],
+    nonce: int,
+) -> None:
+    key = team_state_key(nonce)
+    if key not in st.session_state:
+        current_team = clean_text(editing_record.get("팀"))
+        st.session_state[key] = (
+            current_team
+            if current_team in TEAM_OPTIONS
+            else TEAM_OPTIONS[0]
+        )
+
+
+def set_team(team: str, nonce: int) -> None:
+    if team in TEAM_OPTIONS:
+        st.session_state[team_state_key(nonce)] = team
+
+
+def measures_state_key(nonce: int) -> str:
+    return f"selected_measures_{nonce}"
+
+
+def initialize_measures_state(
+    editing_record: dict[str, Any],
+    nonce: int,
+) -> None:
+    key = measures_state_key(nonce)
+    if key not in st.session_state:
+        st.session_state[key] = selected_measures(
+            editing_record.get("조치사항")
+        )
+
+
+def toggle_measure(measure: str, nonce: int) -> None:
+    key = measures_state_key(nonce)
+    current = list(st.session_state.get(key, []))
+
+    if measure in current:
+        current.remove(measure)
+    else:
+        current.append(measure)
+
+    # 화면/저장 순서는 MEASURE_OPTIONS 순서로 고정
+    st.session_state[key] = [
+        option for option in MEASURE_OPTIONS if option in current
+    ]
 
 
 def rest_minutes_key(nonce: int) -> str:
@@ -1028,6 +1096,8 @@ def render_form(
     nonce = st.session_state.form_nonce
     initialize_time_state(editing_record, nonce)
     initialize_rest_minutes(editing_record, nonce)
+    initialize_team_state(editing_record, nonce)
+    initialize_measures_state(editing_record, nonce)
 
     default_date = datetime.now(KST).date()
     date_text = clean_text(
@@ -1039,15 +1109,6 @@ def render_form(
             default_date = date.fromisoformat(date_text)
         except ValueError:
             pass
-
-    current_team = clean_text(
-        editing_record.get("팀")
-    )
-    team_default = (
-        current_team
-        if current_team in TEAM_OPTIONS
-        else TEAM_OPTIONS[0]
-    )
 
     temperature_default = clean_text(
         editing_record.get("체감온도")
@@ -1075,13 +1136,46 @@ def render_form(
             key=f"site_{nonce}",
         )
 
-        team = st.segmented_control(
-            "팀 선택 *",
-            options=TEAM_OPTIONS,
-            selection_mode="single",
-            default=team_default,
-            format_func=lambda option: option.replace("팀", ""),
-            key=f"team_{nonce}",
+        st.markdown(
+            '<div class="field-label">팀 선택 *</div>',
+            unsafe_allow_html=True,
+        )
+
+        selected_team = clean_text(
+            st.session_state.get(team_state_key(nonce))
+        )
+        team_left, team_right = st.columns(2)
+
+        with team_left:
+            st.button(
+                "중계",
+                key=f"team_relay_{nonce}",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_team == "중계팀"
+                    else "secondary"
+                ),
+                on_click=set_team,
+                args=("중계팀", nonce),
+            )
+
+        with team_right:
+            st.button(
+                "영상",
+                key=f"team_video_{nonce}",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_team == "영상팀"
+                    else "secondary"
+                ),
+                on_click=set_team,
+                args=("영상팀", nonce),
+            )
+
+        team = clean_text(
+            st.session_state.get(team_state_key(nonce))
         )
 
         author = st.text_input(
@@ -1298,13 +1392,89 @@ def render_form(
             "시행한 조치와 특이사항을 남깁니다.",
         )
 
-        measures = st.multiselect(
-            "시행한 조치",
-            options=MEASURE_OPTIONS,
-            default=selected_measures(
-                editing_record.get("조치사항")
-            ),
-            key=f"measures_{nonce}",
+        st.markdown(
+            '<div class="field-label">시행한 조치</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption("복수 선택 가능합니다. 다시 누르면 선택이 해제됩니다.")
+
+        selected_measure_list = list(
+            st.session_state.get(
+                measures_state_key(nonce),
+                [],
+            )
+        )
+
+        measure_labels = {
+            "1시간 이내 10분 이상 휴식": "1시간 이내 10분 이상 휴식",
+            "2시간 이내 20분 이상 휴식": "2시간 이내 20분 이상 휴식",
+            "냉방기 가동 25도 이하": "냉방기 가동 25℃ 이하",
+            "제작팀 협의 조정": "제작팀 협의 조정",
+        }
+
+        measure_row1_left, measure_row1_right = st.columns(2)
+        with measure_row1_left:
+            st.button(
+                measure_labels[MEASURE_OPTIONS[0]],
+                key=f"measure_0_{nonce}",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if MEASURE_OPTIONS[0] in selected_measure_list
+                    else "secondary"
+                ),
+                on_click=toggle_measure,
+                args=(MEASURE_OPTIONS[0], nonce),
+            )
+
+        with measure_row1_right:
+            st.button(
+                measure_labels[MEASURE_OPTIONS[1]],
+                key=f"measure_1_{nonce}",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if MEASURE_OPTIONS[1] in selected_measure_list
+                    else "secondary"
+                ),
+                on_click=toggle_measure,
+                args=(MEASURE_OPTIONS[1], nonce),
+            )
+
+        measure_row2_left, measure_row2_right = st.columns(2)
+        with measure_row2_left:
+            st.button(
+                measure_labels[MEASURE_OPTIONS[2]],
+                key=f"measure_2_{nonce}",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if MEASURE_OPTIONS[2] in selected_measure_list
+                    else "secondary"
+                ),
+                on_click=toggle_measure,
+                args=(MEASURE_OPTIONS[2], nonce),
+            )
+
+        with measure_row2_right:
+            st.button(
+                measure_labels[MEASURE_OPTIONS[3]],
+                key=f"measure_3_{nonce}",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if MEASURE_OPTIONS[3] in selected_measure_list
+                    else "secondary"
+                ),
+                on_click=toggle_measure,
+                args=(MEASURE_OPTIONS[3], nonce),
+            )
+
+        measures = list(
+            st.session_state.get(
+                measures_state_key(nonce),
+                [],
+            )
         )
 
         notes = st.text_area(
