@@ -4,6 +4,8 @@ import csv
 import html
 import io
 import re
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -15,13 +17,17 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.3 · 2026-08-07"
+APP_VERSION = "Professional UI v3.4 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
     "18c-qnfPmGG25qyAM497R7czDw3F7J7WRKmdLX3IGtY0"
 )
 KST = ZoneInfo("Asia/Seoul")
+KMA_POINT_API_URL = (
+    "https://apihub.kma.go.kr/api/typ01/cgi-bin/url/"
+    "nph-sfc_obs_nc_pt_api"
+)
 
 COLUMNS = [
     "id",
@@ -579,6 +585,174 @@ def initialize_time_state(
 def set_time_now(field: str, nonce: int) -> None:
     st.session_state[time_state_key(field, nonce)] = (
         datetime.now(KST).time().replace(second=0, microsecond=0)
+    )
+
+
+def weather_notice_key(nonce: int) -> str:
+    return f"weather_notice_{nonce}"
+
+
+def get_site_coordinates(site_name: str) -> tuple[float, float] | None:
+    """Streamlit Secrets에서 현장명의 위도·경도를 찾습니다."""
+    try:
+        sites = st.secrets["weather"]["sites"]
+    except (KeyError, TypeError):
+        return None
+
+    target = clean_text(site_name).casefold()
+
+    for configured_name, configured_value in sites.items():
+        if clean_text(configured_name).casefold() != target:
+            continue
+
+        try:
+            if isinstance(configured_value, str):
+                parts = [
+                    part.strip()
+                    for part in configured_value.split(",")
+                ]
+                latitude, longitude = map(float, parts[:2])
+            elif hasattr(configured_value, "get"):
+                latitude = float(configured_value.get("lat"))
+                longitude = float(configured_value.get("lon"))
+            else:
+                latitude = float(configured_value[0])
+                longitude = float(configured_value[1])
+        except (IndexError, TypeError, ValueError):
+            return None
+
+        if not (33 <= latitude <= 39 and 124 <= longitude <= 132):
+            return None
+
+        return latitude, longitude
+
+    return None
+
+
+def parse_kma_temperature_response(response_text: str) -> tuple[str, str]:
+    """기상청 특정지점 ASCII 응답에서 최신 체감온도를 추출합니다."""
+    observations: list[tuple[str, float]] = []
+
+    for raw_line in response_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        parts = re.split(r"\s+", line)
+        if len(parts) < 2:
+            continue
+
+        timestamp = parts[0]
+        if not re.fullmatch(r"\d{12}", timestamp):
+            continue
+
+        try:
+            value = float(parts[-1])
+        except ValueError:
+            continue
+
+        if -50 <= value <= 80:
+            observations.append((timestamp, value))
+
+    if not observations:
+        raise ValueError("기상청 응답에서 체감온도 값을 찾지 못했습니다.")
+
+    timestamp, value = observations[-1]
+    observed_at = datetime.strptime(timestamp, "%Y%m%d%H%M").strftime(
+        "%H:%M"
+    )
+    return format_number(value), observed_at
+
+
+def fetch_kma_apparent_temperature(
+    latitude: float,
+    longitude: float,
+    auth_key: str,
+) -> tuple[str, str]:
+    """기상청 500m 격자 특정지점의 최신 체감온도를 조회합니다."""
+    current_time = datetime.now(KST).replace(second=0, microsecond=0)
+    query_end = current_time - timedelta(
+        minutes=(current_time.minute % 5) + 5
+    )
+    query_start = query_end - timedelta(minutes=30)
+    params = urllib.parse.urlencode(
+        {
+            "obs": "ta_chi",
+            "tm1": query_start.strftime("%Y%m%d%H%M"),
+            "tm2": query_end.strftime("%Y%m%d%H%M"),
+            "itv": "5",
+            "lon": f"{longitude:.6f}",
+            "lat": f"{latitude:.6f}",
+            "authKey": auth_key,
+        }
+    )
+    request = urllib.request.Request(
+        f"{KMA_POINT_API_URL}?{params}",
+        headers={"User-Agent": "checktemp-streamlit/1.0"},
+    )
+
+    with urllib.request.urlopen(request, timeout=8) as response:
+        payload = response.read()
+
+    for encoding in ("utf-8", "euc-kr"):
+        try:
+            response_text = payload.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        response_text = payload.decode("utf-8", errors="replace")
+
+    return parse_kma_temperature_response(response_text)
+
+
+def record_heat_start_with_weather(nonce: int) -> None:
+    """폭염 시작시간을 기록하고 설정 시 체감온도도 자동 입력합니다."""
+    set_time_now("heat_start", nonce)
+    notice_key = weather_notice_key(nonce)
+    site_name = clean_text(st.session_state.get(f"site_{nonce}"))
+
+    if not site_name:
+        st.session_state[notice_key] = (
+            "warning",
+            "현장명을 먼저 입력하면 체감온도를 자동 조회할 수 있습니다.",
+        )
+        return
+
+    auth_key = get_secret(("weather", "kma_auth_key"))
+    if not auth_key:
+        st.session_state[notice_key] = (
+            "info",
+            "기상청 인증키가 아직 설정되지 않아 시간만 기록했습니다.",
+        )
+        return
+
+    coordinates = get_site_coordinates(site_name)
+    if coordinates is None:
+        st.session_state[notice_key] = (
+            "warning",
+            f"'{site_name}'의 위도·경도 설정을 찾지 못해 시간만 기록했습니다.",
+        )
+        return
+
+    try:
+        temperature, observed_at = fetch_kma_apparent_temperature(
+            coordinates[0],
+            coordinates[1],
+            auth_key,
+        )
+    except Exception as error:  # noqa: BLE001
+        st.session_state[notice_key] = (
+            "warning",
+            "기상청 체감온도 조회에 실패해 시간만 기록했습니다. "
+            f"직접 입력해 주세요. ({error})",
+        )
+        return
+
+    st.session_state[f"temperature_{nonce}"] = temperature
+    st.session_state[notice_key] = (
+        "success",
+        f"기상청 {observed_at} 기준 체감온도 {temperature}℃를 입력했습니다.",
     )
 
 
@@ -1228,8 +1402,8 @@ def render_form(
                 "폭염 시작 기록",
                 key=f"quick_heat_start_{nonce}",
                 use_container_width=True,
-                on_click=set_time_now,
-                args=("heat_start", nonce),
+                on_click=record_heat_start_with_weather,
+                args=(nonce,),
             )
 
         with heat_right:
@@ -1240,6 +1414,18 @@ def render_form(
                 on_click=set_time_now,
                 args=("heat_end", nonce),
             )
+
+        weather_notice = st.session_state.get(
+            weather_notice_key(nonce)
+        )
+        if weather_notice:
+            notice_type, notice_message = weather_notice
+            if notice_type == "success":
+                st.success(notice_message)
+            elif notice_type == "warning":
+                st.warning(notice_message)
+            else:
+                st.info(notice_message)
 
         st.markdown("**휴게시간 누적**")
         st.caption("휴게할 때마다 해당 시간을 눌러 누적합니다.")
