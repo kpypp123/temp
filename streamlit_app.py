@@ -6,7 +6,6 @@ import json
 import io
 import math
 import re
-import traceback
 import urllib.parse
 import urllib.request
 import uuid
@@ -1002,6 +1001,19 @@ def record_heat_start_with_weather(
             )
             return
 
+        try:
+            latitude, longitude, matched_name = (
+                search_kakao_site_coordinates(site_name, kakao_key)
+            )
+            coordinates = (latitude, longitude)
+        except Exception as error:  # noqa: BLE001
+            st.session_state[notice_key] = (
+                "warning",
+                f"'{site_name}' 장소 검색에 실패해 시작시간만 기록했습니다. "
+                f"현장명을 더 정확하게 입력해 주세요. ({error})",
+            )
+            return
+
     heat_start_text = clean_text(
         st.session_state.get(f"manual_heat_start_{nonce}")
     )
@@ -1046,11 +1058,10 @@ def record_heat_start_with_weather(
                 )
             )
         except Exception as error:  # noqa: BLE001
-            trace_line = traceback.extract_tb(error.__traceback__)[-1].lineno
             st.session_state[notice_key] = (
                 "warning",
                 "입력한 폭염 시간대의 체감온도 조회에 실패했습니다. "
-                f"시간과 작업 날짜를 확인해 주세요. ({error} / L{trace_line})",
+                f"시간과 작업 날짜를 확인해 주세요. ({error})",
             )
             return
 
@@ -1073,19 +1084,6 @@ def record_heat_start_with_weather(
             "자동 입력했습니다.",
         )
         return
-
-        try:
-            latitude, longitude, matched_name = (
-                search_kakao_site_coordinates(site_name, kakao_key)
-            )
-            coordinates = (latitude, longitude)
-        except Exception as error:  # noqa: BLE001
-            st.session_state[notice_key] = (
-                "warning",
-                f"'{site_name}' 장소 검색에 실패해 시작시간만 기록했습니다. "
-                f"현장명을 더 정확하게 입력해 주세요. ({error})",
-            )
-            return
 
     grid_temperature: str | None = None
     grid_observed_at = ""
