@@ -20,7 +20,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.13 · 2026-08-10"
+APP_VERSION = "Professional UI v3.14 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -1033,14 +1033,45 @@ def record_heat_start_with_weather(
     heat_end_text = clean_text(
         st.session_state.get(f"manual_heat_end_{nonce}")
     )
-    if heat_start_text or heat_end_text:
-        heat_start_value = parse_time_value(heat_start_text)
-        heat_end_value = parse_time_value(heat_end_text)
-        if heat_start_value is None or heat_end_value is None:
+    work_start_text = clean_text(
+        st.session_state.get(f"manual_work_start_{nonce}")
+    )
+    work_end_text = clean_text(
+        st.session_state.get(f"manual_work_end_{nonce}")
+    )
+
+    range_label = ""
+    range_start_text = ""
+    range_end_text = ""
+    if heat_start_text and heat_end_text:
+        range_label = "폭염시간"
+        range_start_text = heat_start_text
+        range_end_text = heat_end_text
+    elif heat_start_text or heat_end_text:
+        st.session_state[notice_key] = (
+            "warning",
+            "폭염시간을 사용하려면 폭염 시작과 종료를 모두 입력해 주세요.",
+        )
+        return
+    elif work_start_text and work_end_text:
+        range_label = "근무시간"
+        range_start_text = work_start_text
+        range_end_text = work_end_text
+    elif work_start_text or work_end_text:
+        st.session_state[notice_key] = (
+            "warning",
+            "폭염시간이 비어 있으면 근무시간을 사용합니다. 근무 시작과 "
+            "종료를 모두 입력해 주세요.",
+        )
+        return
+
+    if range_label:
+        range_start_value = parse_time_value(range_start_text)
+        range_end_value = parse_time_value(range_end_text)
+        if range_start_value is None or range_end_value is None:
             st.session_state[notice_key] = (
                 "warning",
-                "시간대 최저·최고 온도를 조회하려면 폭염 시작과 종료를 "
-                "모두 HH:MM 형식으로 입력해 주세요.",
+                f"{range_label} 시작과 종료를 HH:MM 형식으로 입력해 주세요.",
             )
             return
 
@@ -1049,12 +1080,12 @@ def record_heat_start_with_weather(
             selected_date = datetime.now(KST).date()
         range_start = datetime.combine(
             selected_date,
-            heat_start_value,
+            range_start_value,
             tzinfo=KST,
         )
         range_end = datetime.combine(
             selected_date,
-            heat_end_value,
+            range_end_value,
             tzinfo=KST,
         )
         if range_end < range_start:
@@ -1080,7 +1111,7 @@ def record_heat_start_with_weather(
                 )
             st.session_state[notice_key] = (
                 "warning",
-                "입력한 폭염 시간대의 체감온도 조회에 실패했습니다. "
+                f"입력한 {range_label}의 체감온도 조회에 실패했습니다. "
                 f"{error_message}",
             )
             return
@@ -1097,7 +1128,8 @@ def record_heat_start_with_weather(
         )
         st.session_state[notice_key] = (
             "success",
-            f"{matched_name} · {range_start.strftime('%H:%M')}~"
+            f"{matched_name} · {range_label} "
+            f"{range_start.strftime('%H:%M')}~"
             f"{requested_end_text}{end_note} 기상청 500m 격자 "
             f"체감온도 최저 {minimum}℃ · 최고 {maximum}℃를 "
             f"{observation_count}개 자료로 확인해 {temperature_range}℃로 "
@@ -1886,10 +1918,10 @@ def render_form(
         )
 
         st.caption(
-            "폭염 시작·종료를 모두 입력하면 해당 시간대의 기상청 500m "
-            "격자 체감온도 최저~최고값을 입력합니다. 시간을 비워 두면 "
-            "500m 격자와 지역 초단기실황의 현재값을 비교해 높은 값을 "
-            "적용합니다. 범위의 최고값을 기준으로 폭염 단계를 계산합니다."
+            "폭염 시작·종료를 입력하면 폭염시간을 우선 조회합니다. "
+            "폭염시간이 비어 있으면 근무 시작·종료를 대신 사용해 기상청 "
+            "500m 격자 체감온도의 최저~최고값을 입력합니다. 시간대가 모두 "
+            "비어 있을 때만 현재 500m 격자값과 지역 실황값을 비교합니다."
         )
 
         st.divider()
