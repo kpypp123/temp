@@ -18,7 +18,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.8 · 2026-08-10"
+APP_VERSION = "Professional UI v3.9 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -877,6 +877,13 @@ def toggle_measure(measure: str, nonce: int) -> None:
     if measure in current:
         current.remove(measure)
     else:
+        # 10분/20분 휴식 기준은 동시에 선택하지 않도록 합니다.
+        if measure in MEASURE_OPTIONS[:2]:
+            current = [
+                option
+                for option in current
+                if option not in MEASURE_OPTIONS[:2]
+            ]
         current.append(measure)
 
     # 화면/저장 순서는 MEASURE_OPTIONS 순서로 고정
@@ -1669,13 +1676,13 @@ def render_form(
     work_end_text = format_time_value(work_end)
     heat_start_text = format_time_value(heat_start)
     heat_end_text = format_time_value(heat_end)
-    # 휴게시간은 조치사항 버튼으로 기록합니다. 기존 기록을 수정할 때는
-    # 과거에 저장된 누적 휴게시간 값을 보존합니다.
-    rest_minutes = (
-        max(0, parse_int(editing_record.get("휴게시간"), 0))
-        if editing_id
-        else 0
-    )
+    # 선택한 휴식 조치가 Google Sheets의 휴게시간 열에도 저장됩니다.
+    if MEASURE_OPTIONS[0] in measures:
+        rest_minutes = 10
+    elif MEASURE_OPTIONS[1] in measures:
+        rest_minutes = 20
+    else:
+        rest_minutes = 0
 
     validation_errors: list[str] = []
 
