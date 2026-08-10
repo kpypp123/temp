@@ -18,7 +18,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.7 · 2026-08-10"
+APP_VERSION = "Professional UI v3.8 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -1973,11 +1973,17 @@ def render_records(
                 " ~ "
                 f"{clean_text(record.get('폭염종료')) or '-'}"
             )
-            rest_action_text = (
-                "실시"
-                if "휴식" in clean_text(record.get("조치사항"))
-                else "-"
-            )
+            measure_text = clean_text(record.get("조치사항"))
+            has_10_minute_rest = MEASURE_OPTIONS[0] in measure_text
+            has_20_minute_rest = MEASURE_OPTIONS[1] in measure_text
+            if has_10_minute_rest and has_20_minute_rest:
+                rest_action_text = "10분·20분 휴식조치"
+            elif has_10_minute_rest:
+                rest_action_text = "10분 휴식조치"
+            elif has_20_minute_rest:
+                rest_action_text = "20분 휴식조치"
+            else:
+                rest_action_text = "-"
 
             st.markdown(f"### {site}")
 
