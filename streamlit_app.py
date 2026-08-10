@@ -6,6 +6,7 @@ import json
 import io
 import math
 import re
+import traceback
 import urllib.parse
 import urllib.request
 import uuid
@@ -1045,10 +1046,11 @@ def record_heat_start_with_weather(
                 )
             )
         except Exception as error:  # noqa: BLE001
+            trace_line = traceback.extract_tb(error.__traceback__)[-1].lineno
             st.session_state[notice_key] = (
                 "warning",
                 "입력한 폭염 시간대의 체감온도 조회에 실패했습니다. "
-                f"시간과 작업 날짜를 확인해 주세요. ({error})",
+                f"시간과 작업 날짜를 확인해 주세요. ({error} / L{trace_line})",
             )
             return
 
