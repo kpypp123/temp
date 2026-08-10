@@ -19,7 +19,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.11 · 2026-08-10"
+APP_VERSION = "Professional UI v3.12 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -668,8 +668,10 @@ def search_kakao_site_coordinates(
     return latitude, longitude, matched_name
 
 
-def parse_kma_temperature_response(response_text: str) -> tuple[str, str]:
-    """기상청 특정지점 ASCII 응답에서 최신 체감온도를 추출합니다."""
+def parse_kma_temperature_observations(
+    response_text: str,
+) -> list[tuple[str, float]]:
+    """기상청 특정지점 ASCII 응답에서 체감온도 관측값을 추출합니다."""
     observations: list[tuple[str, float]] = []
 
     for raw_line in response_text.splitlines():
@@ -705,6 +707,14 @@ def parse_kma_temperature_response(response_text: str) -> tuple[str, str]:
 
     if not observations:
         raise ValueError("기상청 응답에서 체감온도 값을 찾지 못했습니다.")
+
+    observations.sort(key=lambda item: item[0])
+    return observations
+
+
+def parse_kma_temperature_response(response_text: str) -> tuple[str, str]:
+    """기상청 특정지점 ASCII 응답에서 최신 체감온도를 추출합니다."""
+    observations = parse_kma_temperature_observations(response_text)
 
     timestamp, value = observations[-1]
     observed_at = datetime.strptime(timestamp, "%Y%m%d%H%M").strftime(
@@ -753,6 +763,62 @@ def fetch_kma_apparent_temperature(
         response_text = payload.decode("utf-8", errors="replace")
 
     return parse_kma_temperature_response(response_text)
+
+
+def fetch_kma_apparent_temperature_range(
+    latitude: float,
+    longitude: float,
+    auth_key: str,
+    range_start: datetime,
+    range_end: datetime,
+) -> tuple[str, str, str, int]:
+    """지정한 시간대의 500m 격자 체감온도 최저·최고를 조회합니다."""
+    now = datetime.now(KST).replace(second=0, microsecond=0)
+    if range_start > now:
+        raise ValueError("폭염 시작시간이 현재보다 이후입니다.")
+
+    actual_end = min(range_end, now)
+    if actual_end < range_start:
+        raise ValueError("조회할 폭염 시간대가 없습니다.")
+
+    params = urllib.parse.urlencode(
+        {
+            "obs": "ta_chi",
+            "tm1": range_start.strftime("%Y%m%d%H%M"),
+            "tm2": actual_end.strftime("%Y%m%d%H%M"),
+            "itv": "5",
+            "lon": f"{longitude:.6f}",
+            "lat": f"{latitude:.6f}",
+            "authKey": auth_key,
+        }
+    )
+    request = urllib.request.Request(
+        f"{KMA_POINT_API_URL}?{params}",
+        headers={"User-Agent": "checktemp-streamlit/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        payload = response.read()
+
+    response_text = ""
+    for encoding in ("utf-8", "euc-kr"):
+        try:
+            response_text = payload.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if not response_text:
+        response_text = payload.decode("utf-8", errors="replace")
+
+    observations = parse_kma_temperature_observations(response_text)
+    values = [value for _, value in observations]
+    minimum = min(values)
+    maximum = max(values)
+    return (
+        format_number(minimum),
+        format_number(maximum),
+        actual_end.strftime("%H:%M"),
+        len(values),
+    )
 
 
 def latitude_longitude_to_grid(
@@ -934,6 +1000,77 @@ def record_heat_start_with_weather(
                 "폭염 시작시간만 기록했습니다.",
             )
             return
+
+    heat_start_text = clean_text(
+        st.session_state.get(f"manual_heat_start_{nonce}")
+    )
+    heat_end_text = clean_text(
+        st.session_state.get(f"manual_heat_end_{nonce}")
+    )
+    if heat_start_text or heat_end_text:
+        heat_start_value = parse_time_value(heat_start_text)
+        heat_end_value = parse_time_value(heat_end_text)
+        if heat_start_value is None or heat_end_value is None:
+            st.session_state[notice_key] = (
+                "warning",
+                "시간대 최저·최고 온도를 조회하려면 폭염 시작과 종료를 "
+                "모두 HH:MM 형식으로 입력해 주세요.",
+            )
+            return
+
+        selected_date = st.session_state.get(f"date_{nonce}")
+        if not isinstance(selected_date, date):
+            selected_date = datetime.now(KST).date()
+        range_start = datetime.combine(
+            selected_date,
+            heat_start_value,
+            tzinfo=KST,
+        )
+        range_end = datetime.combine(
+            selected_date,
+            heat_end_value,
+            tzinfo=KST,
+        )
+        if range_end < range_start:
+            range_end += timedelta(days=1)
+
+        try:
+            minimum, maximum, actual_end_text, observation_count = (
+                fetch_kma_apparent_temperature_range(
+                    coordinates[0],
+                    coordinates[1],
+                    auth_key,
+                    range_start,
+                    range_end,
+                )
+            )
+        except Exception as error:  # noqa: BLE001
+            st.session_state[notice_key] = (
+                "warning",
+                "입력한 폭염 시간대의 체감온도 조회에 실패했습니다. "
+                f"시간과 작업 날짜를 확인해 주세요. ({error})",
+            )
+            return
+
+        temperature_range = (
+            minimum if minimum == maximum else f"{minimum}~{maximum}"
+        )
+        st.session_state[f"temperature_{nonce}"] = temperature_range
+        requested_end_text = range_end.strftime("%H:%M")
+        end_note = (
+            ""
+            if actual_end_text == requested_end_text
+            else f" (현재 조회 가능한 {actual_end_text}까지)"
+        )
+        st.session_state[notice_key] = (
+            "success",
+            f"{matched_name} · {range_start.strftime('%H:%M')}~"
+            f"{requested_end_text}{end_note} 기상청 500m 격자 "
+            f"체감온도 최저 {minimum}℃ · 최고 {maximum}℃를 "
+            f"{observation_count}개 자료로 확인해 {temperature_range}℃로 "
+            "자동 입력했습니다.",
+        )
+        return
 
         try:
             latitude, longitude, matched_name = (
@@ -1685,7 +1822,7 @@ def render_form(
         heat_end = parse_time_value(heat_end_input)
 
         st.button(
-            "현장 체감온도 자동 조회",
+            "시간대 체감온도 자동 조회",
             key=f"lookup_weather_{nonce}",
             use_container_width=True,
             on_click=record_heat_start_with_weather,
@@ -1729,10 +1866,10 @@ def render_form(
         )
 
         st.caption(
-            "자동 조회 시 현장 좌표 기준 기상청 500m 격자값과 지역 "
-            "초단기실황 체감온도를 비교해 높은 값을 적용합니다. 현장 "
-            "측정값이 더 높다면 직접 수정하세요. 범위로 입력한 경우에는 "
-            "높은 온도를 기준으로 폭염 단계와 통계를 계산합니다."
+            "폭염 시작·종료를 모두 입력하면 해당 시간대의 기상청 500m "
+            "격자 체감온도 최저~최고값을 입력합니다. 시간을 비워 두면 "
+            "500m 격자와 지역 초단기실황의 현재값을 비교해 높은 값을 "
+            "적용합니다. 범위의 최고값을 기준으로 폭염 단계를 계산합니다."
         )
 
         st.divider()
