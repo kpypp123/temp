@@ -254,14 +254,101 @@ st.markdown(
         color: #ffffff;
     }
 
-    div[data-baseweb="input"] > div,
-    div[data-baseweb="select"] > div,
-    div[data-baseweb="textarea"] > div,
-    textarea {
-        border-radius: 7px !important;
-        border-color: var(--line-strong) !important;
-        background: #ffffff !important;
-    }
+/* 입력창 / 날짜 / 시간 / 숫자 / 텍스트 영역 */
+div[data-baseweb="input"] > div,
+div[data-baseweb="select"] > div,
+div[data-baseweb="textarea"] > div,
+textarea {
+    border-radius: 7px !important;
+    border-color: var(--line-strong) !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+}
+
+/* 모바일 다크모드 강제 방지 */
+.stApp {
+    background: var(--bg);
+    color: var(--ink);
+    color-scheme: light;
+}
+
+/* 실제 입력되는 글자 */
+input,
+textarea {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    caret-color: #111827 !important;
+}
+
+/* 입력 전 안내문구 */
+input::placeholder,
+textarea::placeholder {
+    color: #98a2b3 !important;
+    -webkit-text-fill-color: #98a2b3 !important;
+    opacity: 1 !important;
+}
+
+/* 날짜 입력 */
+div[data-testid="stDateInput"] input {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    background-color: #ffffff !important;
+}
+
+/* 시간 입력 */
+div[data-testid="stTimeInput"] input {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    background-color: #ffffff !important;
+}
+
+/* 숫자 입력 */
+div[data-testid="stNumberInput"] input {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    background-color: #ffffff !important;
+}
+
+/* 일반 텍스트 입력 */
+div[data-testid="stTextInput"] input {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    background-color: #ffffff !important;
+}
+
+/* 긴 텍스트 입력 */
+div[data-testid="stTextArea"] textarea {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    background-color: #ffffff !important;
+}
+
+/* 선택박스 */
+div[data-baseweb="select"] > div {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+}
+
+div[data-baseweb="select"] span {
+    color: #111827 !important;
+}
+
+/* 펼쳐지는 선택 목록 */
+div[role="listbox"],
+div[role="option"] {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+}
+
+/* 날짜 달력 */
+div[data-baseweb="calendar"] {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+}
+
+div[data-baseweb="calendar"] * {
+    color: #111827 !important;
+}
 
     label[data-testid="stWidgetLabel"] p {
         color: #344054;
