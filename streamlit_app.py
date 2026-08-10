@@ -18,7 +18,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.9 · 2026-08-10"
+APP_VERSION = "Professional UI v3.10 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -817,8 +817,9 @@ def record_heat_start_with_weather(
     st.session_state[f"temperature_{nonce}"] = temperature
     st.session_state[notice_key] = (
         "success",
-        f"{matched_name} · 기상청 {observed_at} 기준 체감온도 "
-        f"{temperature}℃를 자동 입력했습니다.",
+        f"{matched_name} 좌표 기준 · 기상청 500m 격자 "
+        f"{observed_at} 체감온도 {temperature}℃를 자동 입력했습니다. "
+        "기상청 지역 화면과는 조회 위치에 따라 차이가 날 수 있습니다.",
     )
 
 
@@ -1533,8 +1534,10 @@ def render_form(
         )
 
         st.caption(
-            "범위로 입력한 경우 높은 온도를 기준으로 "
-            "폭염 단계와 통계를 계산합니다."
+            "자동 조회값은 현장 좌표 기준 기상청 500m 격자 자료입니다. "
+            "기상청 지역 화면 또는 현장 측정값이 더 높다면 안전을 위해 "
+            "높은 값을 직접 입력하세요. 범위로 입력한 경우에는 높은 온도를 "
+            "기준으로 폭염 단계와 통계를 계산합니다."
         )
 
         st.divider()
