@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import html
+import json
 import io
 import re
 import urllib.parse
@@ -17,7 +18,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.4 · 2026-08-10"
+APP_VERSION = "Professional UI v3.5 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -28,6 +29,7 @@ KMA_POINT_API_URL = (
     "https://apihub.kma.go.kr/api/typ01/cgi-bin/url/"
     "nph-sfc_obs_nc_pt_api"
 )
+KAKAO_PLACE_API_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 
 COLUMNS = [
     "id",
@@ -629,6 +631,38 @@ def get_site_coordinates(site_name: str) -> tuple[float, float] | None:
     return None
 
 
+def search_kakao_site_coordinates(
+    site_name: str,
+    rest_api_key: str,
+) -> tuple[float, float, str]:
+    """카카오 장소 검색으로 현장명의 위도·경도를 찾습니다."""
+    params = urllib.parse.urlencode({"query": site_name, "size": "5"})
+    request = urllib.request.Request(
+        f"{KAKAO_PLACE_API_URL}?{params}",
+        headers={
+            "Authorization": f"KakaoAK {rest_api_key}",
+            "User-Agent": "checktemp-streamlit/1.0",
+        },
+    )
+
+    with urllib.request.urlopen(request, timeout=8) as response:
+        result = json.loads(response.read().decode("utf-8"))
+
+    documents = result.get("documents") or []
+    if not documents:
+        raise ValueError("카카오 장소 검색 결과가 없습니다")
+
+    place = documents[0]
+    latitude = float(place["y"])
+    longitude = float(place["x"])
+    matched_name = clean_text(place.get("place_name")) or site_name
+
+    if not (33 <= latitude <= 39 and 124 <= longitude <= 132):
+        raise ValueError("검색된 장소가 대한민국 범위를 벗어났습니다")
+
+    return latitude, longitude, matched_name
+
+
 def parse_kma_temperature_response(response_text: str) -> tuple[str, str]:
     """기상청 특정지점 ASCII 응답에서 최신 체감온도를 추출합니다."""
     observations: list[tuple[str, float]] = []
@@ -728,12 +762,29 @@ def record_heat_start_with_weather(nonce: int) -> None:
         return
 
     coordinates = get_site_coordinates(site_name)
+    matched_name = site_name
     if coordinates is None:
-        st.session_state[notice_key] = (
-            "warning",
-            f"'{site_name}'의 위도·경도 설정을 찾지 못해 시간만 기록했습니다.",
-        )
-        return
+        kakao_key = get_secret(("location", "kakao_rest_api_key"))
+        if not kakao_key:
+            st.session_state[notice_key] = (
+                "warning",
+                "현장 좌표가 등록되지 않았고 카카오 REST API 키도 없습니다. "
+                "폭염 시작시간만 기록했습니다.",
+            )
+            return
+
+        try:
+            latitude, longitude, matched_name = (
+                search_kakao_site_coordinates(site_name, kakao_key)
+            )
+            coordinates = (latitude, longitude)
+        except Exception as error:  # noqa: BLE001
+            st.session_state[notice_key] = (
+                "warning",
+                f"'{site_name}' 장소 검색에 실패해 시작시간만 기록했습니다. "
+                f"현장명을 더 정확하게 입력해 주세요. ({error})",
+            )
+            return
 
     try:
         temperature, observed_at = fetch_kma_apparent_temperature(
@@ -752,7 +803,8 @@ def record_heat_start_with_weather(nonce: int) -> None:
     st.session_state[f"temperature_{nonce}"] = temperature
     st.session_state[notice_key] = (
         "success",
-        f"기상청 {observed_at} 기준 체감온도 {temperature}℃를 입력했습니다.",
+        f"{matched_name} · 기상청 {observed_at} 기준 체감온도 "
+        f"{temperature}℃를 자동 입력했습니다.",
     )
 
 
