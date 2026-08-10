@@ -18,7 +18,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.6 · 2026-08-10"
+APP_VERSION = "Professional UI v3.7 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -750,9 +750,13 @@ def fetch_kma_apparent_temperature(
     return parse_kma_temperature_response(response_text)
 
 
-def record_heat_start_with_weather(nonce: int) -> None:
+def record_heat_start_with_weather(
+    nonce: int,
+    record_start_time: bool = True,
+) -> None:
     """폭염 시작시간을 기록하고 설정 시 체감온도도 자동 입력합니다."""
-    set_time_now("heat_start", nonce)
+    if record_start_time:
+        set_time_now("heat_start", nonce)
     notice_key = weather_notice_key(nonce)
     site_name = clean_text(st.session_state.get(f"site_{nonce}"))
 
@@ -1428,54 +1432,62 @@ def render_form(
         render_section_heading(
             "02",
             "시간 기록",
-            "상황 발생 시 버튼 한 번으로 "
-            "현재 시간을 입력합니다.",
+            "근무·폭염 시간을 직접 입력합니다.",
         )
 
         st.caption(
-            "해당 버튼을 누른 시점의 한국 시간이 "
-            "즉시 입력됩니다."
+            "24시간 형식으로 입력하세요. 예: 오전 9시는 09:00, "
+            "오후 6시는 18:00"
         )
 
         work_left, work_right = st.columns(2)
 
         with work_left:
-            st.button(
-                "근무 시작 기록",
-                key=f"quick_work_start_{nonce}",
-                use_container_width=True,
-                on_click=set_time_now,
-                args=("work_start", nonce),
+            work_start_input = st.text_input(
+                "근무 시작 *",
+                value=clean_text(editing_record.get("근무시작")),
+                placeholder="예: 09:00",
+                key=f"manual_work_start_{nonce}",
             )
 
         with work_right:
-            st.button(
-                "근무 종료 기록",
-                key=f"quick_work_end_{nonce}",
-                use_container_width=True,
-                on_click=set_time_now,
-                args=("work_end", nonce),
+            work_end_input = st.text_input(
+                "근무 종료 *",
+                value=clean_text(editing_record.get("근무종료")),
+                placeholder="예: 18:00",
+                key=f"manual_work_end_{nonce}",
             )
 
         heat_left, heat_right = st.columns(2)
 
         with heat_left:
-            st.button(
-                "폭염 시작 기록",
-                key=f"quick_heat_start_{nonce}",
-                use_container_width=True,
-                on_click=record_heat_start_with_weather,
-                args=(nonce,),
+            heat_start_input = st.text_input(
+                "폭염 시작",
+                value=clean_text(editing_record.get("폭염시작")),
+                placeholder="예: 13:00",
+                key=f"manual_heat_start_{nonce}",
             )
 
         with heat_right:
-            st.button(
-                "폭염 종료 기록",
-                key=f"quick_heat_end_{nonce}",
-                use_container_width=True,
-                on_click=set_time_now,
-                args=("heat_end", nonce),
+            heat_end_input = st.text_input(
+                "폭염 종료",
+                value=clean_text(editing_record.get("폭염종료")),
+                placeholder="예: 17:00",
+                key=f"manual_heat_end_{nonce}",
             )
+
+        work_start = parse_time_value(work_start_input)
+        work_end = parse_time_value(work_end_input)
+        heat_start = parse_time_value(heat_start_input)
+        heat_end = parse_time_value(heat_end_input)
+
+        st.button(
+            "현장 체감온도 자동 조회",
+            key=f"lookup_weather_{nonce}",
+            use_container_width=True,
+            on_click=record_heat_start_with_weather,
+            args=(nonce, False),
+        )
 
         weather_notice = st.session_state.get(
             weather_notice_key(nonce)
@@ -1489,123 +1501,9 @@ def render_form(
             else:
                 st.info(notice_message)
 
-        st.markdown("**휴게시간 누적**")
-        st.caption("휴게할 때마다 해당 시간을 눌러 누적합니다.")
-
-        rest_10, rest_20, rest_30 = st.columns(3)
-
-        with rest_10:
-            st.button(
-                "+10분",
-                key=f"add_rest_10_{nonce}",
-                use_container_width=True,
-                on_click=add_rest_minutes,
-                args=(10, nonce),
-            )
-
-        with rest_20:
-            st.button(
-                "+20분",
-                key=f"add_rest_20_{nonce}",
-                use_container_width=True,
-                on_click=add_rest_minutes,
-                args=(20, nonce),
-            )
-
-        with rest_30:
-            st.button(
-                "+30분",
-                key=f"add_rest_30_{nonce}",
-                use_container_width=True,
-                on_click=add_rest_minutes,
-                args=(30, nonce),
-            )
-
-        st.button(
-            "휴게시간 초기화",
-            key=f"clear_rest_minutes_{nonce}",
-            use_container_width=True,
-            on_click=clear_rest_minutes,
-            args=(nonce,),
-        )
-
-        render_time_summary(nonce)
-
         st.caption(
-            "입력된 시간은 하단의 기록 저장을 "
-            "완료해야 Google Sheets에 반영됩니다."
+            "휴게시간은 아래 조치사항의 휴식 버튼을 선택해 기록합니다."
         )
-
-        with st.expander(
-            "근무·폭염 시간 직접 수정",
-            expanded=False,
-        ):
-            st.caption(
-                "필요한 경우 근무·폭염 시간만 직접 "
-                "수정하거나 초기화합니다."
-            )
-
-            direct_work_left, direct_work_right = (
-                st.columns(2)
-            )
-
-            with direct_work_left:
-                work_start = st.time_input(
-                    "근무 시작",
-                    key=time_state_key(
-                        "work_start",
-                        nonce,
-                    ),
-                    step=timedelta(minutes=1),
-                )
-
-            with direct_work_right:
-                work_end = st.time_input(
-                    "근무 종료",
-                    key=time_state_key(
-                        "work_end",
-                        nonce,
-                    ),
-                    step=timedelta(minutes=1),
-                )
-
-            direct_heat_left, direct_heat_right = (
-                st.columns(2)
-            )
-
-            with direct_heat_left:
-                heat_start = st.time_input(
-                    "폭염 시작",
-                    key=time_state_key(
-                        "heat_start",
-                        nonce,
-                    ),
-                    step=timedelta(minutes=1),
-                )
-                st.button(
-                    "폭염 시작 지우기",
-                    key=f"clear_heat_start_{nonce}",
-                    use_container_width=True,
-                    on_click=clear_time,
-                    args=("heat_start", nonce),
-                )
-
-            with direct_heat_right:
-                heat_end = st.time_input(
-                    "폭염 종료",
-                    key=time_state_key(
-                        "heat_end",
-                        nonce,
-                    ),
-                    step=timedelta(minutes=1),
-                )
-                st.button(
-                    "폭염 종료 지우기",
-                    key=f"clear_heat_end_{nonce}",
-                    use_container_width=True,
-                    on_click=clear_time,
-                    args=("heat_end", nonce),
-                )
 
         st.divider()
 
@@ -1771,12 +1669,12 @@ def render_form(
     work_end_text = format_time_value(work_end)
     heat_start_text = format_time_value(heat_start)
     heat_end_text = format_time_value(heat_end)
-    rest_minutes = max(
-        0,
-        parse_int(
-            st.session_state.get(rest_minutes_key(nonce)),
-            0,
-        ),
+    # 휴게시간은 조치사항 버튼으로 기록합니다. 기존 기록을 수정할 때는
+    # 과거에 저장된 누적 휴게시간 값을 보존합니다.
+    rest_minutes = (
+        max(0, parse_int(editing_record.get("휴게시간"), 0))
+        if editing_id
+        else 0
     )
 
     validation_errors: list[str] = []
@@ -1871,7 +1769,7 @@ def render_form(
 
 def render_metrics(records: pd.DataFrame) -> None:
     hot_count = 0
-    total_rest = 0
+    rest_action_count = 0
 
     if not records.empty:
         hot_count = sum(
@@ -1884,9 +1782,9 @@ def render_metrics(records: pd.DataFrame) -> None:
             for value in records["체감온도"]
         )
 
-        total_rest = sum(
-            parse_int(value)
-            for value in records["휴게시간"]
+        rest_action_count = sum(
+            "휴식" in clean_text(value)
+            for value in records["조치사항"]
         )
 
     st.markdown(
@@ -1901,8 +1799,8 @@ def render_metrics(records: pd.DataFrame) -> None:
                 <b>{hot_count}</b>
             </div>
             <div class="metric-card">
-                <span>누적 휴게시간</span>
-                <b>{total_rest}분</b>
+                <span>휴식 조치 기록</span>
+                <b>{rest_action_count}</b>
             </div>
         </div>
         """,
@@ -2075,13 +1973,9 @@ def render_records(
                 " ~ "
                 f"{clean_text(record.get('폭염종료')) or '-'}"
             )
-            rest_minutes_value = parse_int(
-                record.get("휴게시간"),
-                0,
-            )
-            rest_time_text = (
-                f"{rest_minutes_value}분"
-                if rest_minutes_value > 0
+            rest_action_text = (
+                "실시"
+                if "휴식" in clean_text(record.get("조치사항"))
                 else "-"
             )
 
@@ -2118,8 +2012,8 @@ def render_records(
                         <b>{html.escape(heat_time_text)}</b>
                     </div>
                     <div class="record-detail">
-                        <span>휴게 시간</span>
-                        <b>{html.escape(rest_time_text)}</b>
+                        <span>휴식 조치</span>
+                        <b>{html.escape(rest_action_text)}</b>
                     </div>
                 </div>
                 """,
