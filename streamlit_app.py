@@ -18,7 +18,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.5 · 2026-08-10"
+APP_VERSION = "Professional UI v3.6 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -672,20 +672,30 @@ def parse_kma_temperature_response(response_text: str) -> tuple[str, str]:
         if not line or line.startswith("#"):
             continue
 
-        parts = re.split(r"\s+", line)
-        if len(parts) < 2:
+        # 응답 버전에 따라 공백/쉼표 구분 및 초(14자리) 포함 여부가
+        # 달라질 수 있으므로 행 전체에서 시각과 값을 찾습니다.
+        timestamp_match = re.search(r"(?<!\d)(\d{12}|\d{14})(?!\d)", line)
+        if timestamp_match:
+            timestamp = timestamp_match.group(1)[:12]
+            value_text = line[timestamp_match.end():]
+        else:
+            separated_time = re.search(
+                r"(\d{4})[-/.]?(\d{2})[-/.]?(\d{2})"
+                r"[ T]?(\d{2}):?(\d{2})",
+                line,
+            )
+            if not separated_time:
+                continue
+            timestamp = "".join(separated_time.groups())
+            value_text = line[separated_time.end():]
+
+        numeric_values = re.findall(r"[-+]?\d+(?:\.\d+)?", value_text)
+        if not numeric_values:
             continue
 
-        timestamp = parts[0]
-        if not re.fullmatch(r"\d{12}", timestamp):
-            continue
-
-        try:
-            value = float(parts[-1])
-        except ValueError:
-            continue
-
-        if -50 <= value <= 80:
+        # 특정지점 단일요소 응답의 관측값은 행의 마지막 숫자입니다.
+        value = float(numeric_values[-1])
+        if -50 <= value <= 80 and value not in (-99.0, -999.0, -9999.0):
             observations.append((timestamp, value))
 
     if not observations:
@@ -706,9 +716,9 @@ def fetch_kma_apparent_temperature(
     """기상청 500m 격자 특정지점의 최신 체감온도를 조회합니다."""
     current_time = datetime.now(KST).replace(second=0, microsecond=0)
     query_end = current_time - timedelta(
-        minutes=(current_time.minute % 5) + 5
+        minutes=(current_time.minute % 5) + 10
     )
-    query_start = query_end - timedelta(minutes=30)
+    query_start = query_end - timedelta(minutes=55)
     params = urllib.parse.urlencode(
         {
             "obs": "ta_chi",
