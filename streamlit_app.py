@@ -8,6 +8,7 @@ import math
 import re
 import urllib.parse
 import urllib.request
+import urllib.error
 import uuid
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -19,7 +20,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.12 · 2026-08-10"
+APP_VERSION = "Professional UI v3.13 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -796,8 +797,20 @@ def fetch_kma_apparent_temperature_range(
         f"{KMA_POINT_API_URL}?{params}",
         headers={"User-Agent": "checktemp-streamlit/1.0"},
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
-        payload = response.read()
+    payload: bytes | None = None
+    last_network_error: Exception | None = None
+    for _ in range(2):
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = response.read()
+            break
+        except (TimeoutError, urllib.error.URLError) as error:
+            last_network_error = error
+
+    if payload is None:
+        raise TimeoutError(
+            "기상청 서버 응답이 지연되고 있습니다. 잠시 후 다시 조회해 주세요."
+        ) from last_network_error
 
     response_text = ""
     for encoding in ("utf-8", "euc-kr"):
@@ -1058,10 +1071,17 @@ def record_heat_start_with_weather(
                 )
             )
         except Exception as error:  # noqa: BLE001
+            if isinstance(error, TimeoutError):
+                error_message = str(error)
+            else:
+                error_message = (
+                    "시간과 작업 날짜를 확인해 주세요. "
+                    f"({error})"
+                )
             st.session_state[notice_key] = (
                 "warning",
                 "입력한 폭염 시간대의 체감온도 조회에 실패했습니다. "
-                f"시간과 작업 날짜를 확인해 주세요. ({error})",
+                f"{error_message}",
             )
             return
 
