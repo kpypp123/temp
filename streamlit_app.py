@@ -4,6 +4,7 @@ import csv
 import html
 import json
 import io
+import math
 import re
 import urllib.parse
 import urllib.request
@@ -18,7 +19,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.10 · 2026-08-10"
+APP_VERSION = "Professional UI v3.11 · 2026-08-10"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -28,6 +29,10 @@ KST = ZoneInfo("Asia/Seoul")
 KMA_POINT_API_URL = (
     "https://apihub.kma.go.kr/api/typ01/cgi-bin/url/"
     "nph-sfc_obs_nc_pt_api"
+)
+KMA_ULTRA_NOWCAST_API_URL = (
+    "https://apihub.kma.go.kr/api/typ02/openApi/"
+    "VilageFcstInfoService_2.0/getUltraSrtNcst"
 )
 KAKAO_PLACE_API_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 
@@ -750,6 +755,149 @@ def fetch_kma_apparent_temperature(
     return parse_kma_temperature_response(response_text)
 
 
+def latitude_longitude_to_grid(
+    latitude: float,
+    longitude: float,
+) -> tuple[int, int]:
+    """위·경도를 기상청 동네예보 Lambert 격자 좌표로 변환합니다."""
+    earth_radius = 6371.00877
+    grid_size = 5.0
+    standard_parallel_1 = 30.0
+    standard_parallel_2 = 60.0
+    origin_longitude = 126.0
+    origin_latitude = 38.0
+    origin_x = 43.0
+    origin_y = 136.0
+    radians = math.pi / 180.0
+
+    radius = earth_radius / grid_size
+    parallel_1 = standard_parallel_1 * radians
+    parallel_2 = standard_parallel_2 * radians
+    origin_lon = origin_longitude * radians
+    origin_lat = origin_latitude * radians
+
+    sn = math.tan(math.pi * 0.25 + parallel_2 * 0.5) / math.tan(
+        math.pi * 0.25 + parallel_1 * 0.5
+    )
+    sn = math.log(math.cos(parallel_1) / math.cos(parallel_2)) / math.log(sn)
+    sf = math.tan(math.pi * 0.25 + parallel_1 * 0.5) ** sn
+    sf = sf * math.cos(parallel_1) / sn
+    ro = math.tan(math.pi * 0.25 + origin_lat * 0.5) ** sn
+    ro = radius * sf / ro
+
+    ra = math.tan(math.pi * 0.25 + latitude * radians * 0.5) ** sn
+    ra = radius * sf / ra
+    theta = longitude * radians - origin_lon
+    if theta > math.pi:
+        theta -= 2.0 * math.pi
+    if theta < -math.pi:
+        theta += 2.0 * math.pi
+    theta *= sn
+
+    grid_x = int(ra * math.sin(theta) + origin_x + 0.5)
+    grid_y = int(ro - ra * math.cos(theta) + origin_y + 0.5)
+    return grid_x, grid_y
+
+
+def calculate_summer_apparent_temperature(
+    air_temperature: float,
+    relative_humidity: float,
+) -> float:
+    """기상청 여름철 산식으로 기온·습도 기반 체감온도를 계산합니다."""
+    wet_bulb = (
+        air_temperature
+        * math.atan(0.151977 * math.sqrt(relative_humidity + 8.313659))
+        + math.atan(air_temperature + relative_humidity)
+        - math.atan(relative_humidity - 1.67633)
+        + 0.00391838
+        * relative_humidity ** 1.5
+        * math.atan(0.023101 * relative_humidity)
+        - 4.686035
+    )
+    apparent = (
+        -0.2442
+        + 0.55399 * wet_bulb
+        + 0.45535 * air_temperature
+        - 0.0022 * wet_bulb**2
+        + 0.00278 * wet_bulb * air_temperature
+        + 3.0
+    )
+    return round(apparent, 1)
+
+
+def fetch_kma_regional_apparent_temperature(
+    latitude: float,
+    longitude: float,
+    auth_key: str,
+) -> tuple[str, str, str, str]:
+    """동네예보 초단기실황의 기온·습도로 지역 체감온도를 계산합니다."""
+    grid_x, grid_y = latitude_longitude_to_grid(latitude, longitude)
+    current_time = datetime.now(KST).replace(second=0, microsecond=0)
+    latest_candidate = current_time.replace(minute=0)
+    if current_time.minute < 15:
+        latest_candidate -= timedelta(hours=1)
+
+    last_error = "조회 가능한 초단기실황이 없습니다."
+    for hours_back in range(4):
+        base_time = latest_candidate - timedelta(hours=hours_back)
+        params = urllib.parse.urlencode(
+            {
+                "pageNo": "1",
+                "numOfRows": "1000",
+                "dataType": "JSON",
+                "base_date": base_time.strftime("%Y%m%d"),
+                "base_time": base_time.strftime("%H%M"),
+                "nx": str(grid_x),
+                "ny": str(grid_y),
+                "authKey": auth_key,
+            }
+        )
+        request = urllib.request.Request(
+            f"{KMA_ULTRA_NOWCAST_API_URL}?{params}",
+            headers={"User-Agent": "checktemp-streamlit/1.0"},
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            response_body = result.get("response") or {}
+            header = response_body.get("header") or {}
+            if clean_text(header.get("resultCode")) != "00":
+                last_error = clean_text(header.get("resultMsg")) or last_error
+                continue
+
+            raw_items = (
+                response_body.get("body", {}).get("items", {}).get("item", [])
+            )
+            values = {
+                clean_text(item.get("category")): parse_float(item.get("obsrValue"))
+                for item in raw_items
+            }
+            air_temperature = values.get("T1H")
+            relative_humidity = values.get("REH")
+            if air_temperature is None or relative_humidity is None:
+                last_error = "초단기실황에 기온 또는 습도 값이 없습니다."
+                continue
+            if not (-50 <= air_temperature <= 60 and 0 <= relative_humidity <= 100):
+                last_error = "초단기실황 기온·습도 값이 정상 범위를 벗어났습니다."
+                continue
+
+            apparent = calculate_summer_apparent_temperature(
+                air_temperature,
+                relative_humidity,
+            )
+            return (
+                format_number(apparent),
+                base_time.strftime("%H:%M"),
+                format_number(air_temperature),
+                format_number(relative_humidity),
+            )
+        except Exception as error:  # noqa: BLE001
+            last_error = str(error)
+
+    raise ValueError(last_error)
+
+
 def record_heat_start_with_weather(
     nonce: int,
     record_start_time: bool = True,
@@ -800,26 +948,73 @@ def record_heat_start_with_weather(
             )
             return
 
+    grid_temperature: str | None = None
+    grid_observed_at = ""
+    regional_temperature: str | None = None
+    regional_observed_at = ""
+    regional_air_temperature = ""
+    regional_humidity = ""
+    lookup_errors: list[str] = []
+
     try:
-        temperature, observed_at = fetch_kma_apparent_temperature(
+        grid_temperature, grid_observed_at = fetch_kma_apparent_temperature(
             coordinates[0],
             coordinates[1],
             auth_key,
         )
     except Exception as error:  # noqa: BLE001
+        lookup_errors.append(f"500m 격자: {error}")
+
+    try:
+        (
+            regional_temperature,
+            regional_observed_at,
+            regional_air_temperature,
+            regional_humidity,
+        ) = fetch_kma_regional_apparent_temperature(
+            coordinates[0],
+            coordinates[1],
+            auth_key,
+        )
+    except Exception as error:  # noqa: BLE001
+        lookup_errors.append(f"지역 실황: {error}")
+
+    available_temperatures = [
+        value
+        for value in (grid_temperature, regional_temperature)
+        if value is not None
+    ]
+    if not available_temperatures:
         st.session_state[notice_key] = (
             "warning",
             "기상청 체감온도 조회에 실패해 시간만 기록했습니다. "
-            f"직접 입력해 주세요. ({error})",
+            f"직접 입력해 주세요. ({' / '.join(lookup_errors)})",
         )
         return
 
-    st.session_state[f"temperature_{nonce}"] = temperature
+    applied_temperature = max(
+        available_temperatures,
+        key=lambda value: float(value),
+    )
+    st.session_state[f"temperature_{nonce}"] = applied_temperature
+
+    detail_parts: list[str] = []
+    if grid_temperature is not None:
+        detail_parts.append(
+            f"500m 격자 {grid_observed_at} {grid_temperature}℃"
+        )
+    if regional_temperature is not None:
+        detail_parts.append(
+            f"지역 실황 {regional_observed_at} {regional_temperature}℃"
+            f"(기온 {regional_air_temperature}℃·습도 {regional_humidity}%)"
+        )
+    if lookup_errors:
+        detail_parts.append(f"일부 조회 실패: {' / '.join(lookup_errors)}")
+
     st.session_state[notice_key] = (
         "success",
-        f"{matched_name} 좌표 기준 · 기상청 500m 격자 "
-        f"{observed_at} 체감온도 {temperature}℃를 자동 입력했습니다. "
-        "기상청 지역 화면과는 조회 위치에 따라 차이가 날 수 있습니다.",
+        f"{matched_name} · {' / '.join(detail_parts)} · "
+        f"안전을 위해 높은 값 {applied_temperature}℃를 자동 적용했습니다.",
     )
 
 
