@@ -4,12 +4,14 @@ import csv
 import html
 import json
 import io
+import logging
 import math
 import re
 import urllib.parse
 import urllib.request
 import urllib.error
 import uuid
+import time as time_module
 from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -23,7 +25,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.23 · 2026-08-11"
+APP_VERSION = "Professional UI v3.24 · 2026-08-11"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -166,6 +168,72 @@ TIME_FIELD_COLUMNS = {
     "heat_start": "폭염시작",
     "heat_end": "폭염종료",
 }
+
+
+WEATHER_LOGGER = logging.getLogger("checktemp.weather")
+if not WEATHER_LOGGER.handlers:
+    _weather_handler = logging.StreamHandler()
+    _weather_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [CHECKTEMP-WEATHER] %(levelname)s %(message)s"
+        )
+    )
+    WEATHER_LOGGER.addHandler(_weather_handler)
+WEATHER_LOGGER.setLevel(logging.INFO)
+WEATHER_LOGGER.propagate = False
+
+
+def weather_debug_log_key(nonce: int) -> str:
+    return f"weather_debug_log_{nonce}"
+
+
+def clear_weather_debug_log(nonce: int) -> None:
+    st.session_state[weather_debug_log_key(nonce)] = []
+
+
+def add_weather_debug_log(
+    nonce: int | None,
+    message: str,
+    *,
+    level: str = "info",
+) -> None:
+    """기상조회 진단 로그를 Streamlit 로그와 화면용 세션에 함께 남깁니다."""
+    now_text = datetime.now(KST).strftime("%H:%M:%S")
+    clean_message = clean_text(message).replace("\n", " ")
+    rendered = f"[{now_text}] {clean_message}"
+
+    if level == "error":
+        WEATHER_LOGGER.error(clean_message)
+    elif level == "warning":
+        WEATHER_LOGGER.warning(clean_message)
+    else:
+        WEATHER_LOGGER.info(clean_message)
+
+    if nonce is None:
+        return
+
+    key = weather_debug_log_key(nonce)
+    existing = list(st.session_state.get(key, []))
+    existing.append(rendered)
+    st.session_state[key] = existing[-80:]
+
+
+def safe_error_body(error: urllib.error.HTTPError) -> str:
+    """HTTP 오류 응답을 인증정보 없이 짧게 기록합니다."""
+    try:
+        payload = error.read(1200)
+    except Exception:
+        return ""
+
+    if not payload:
+        return ""
+
+    for encoding in ("utf-8", "euc-kr"):
+        try:
+            return payload.decode(encoding, errors="replace")[:1000]
+        except Exception:
+            continue
+    return repr(payload[:500])
 
 
 st.set_page_config(
@@ -932,14 +1000,38 @@ def fetch_kma_apparent_temperature_range(
     auth_key: str,
     range_start: datetime,
     range_end: datetime,
+    *,
+    debug_nonce: int | None = None,
 ) -> tuple[str, str, str, int]:
-    """지정한 시간대의 500m 격자 체감온도 최저·최고를 조회합니다."""
+    """v3.17 방식으로 시간대 전체를 한 번에 조회하고 상세 진단 로그를 남깁니다."""
     now = datetime.now(KST).replace(second=0, microsecond=0)
+
+    add_weather_debug_log(
+        debug_nonce,
+        (
+            "500m 범위조회 시작 | "
+            f"range={range_start.strftime('%Y-%m-%d %H:%M')}"
+            f"~{range_end.strftime('%Y-%m-%d %H:%M')} | "
+            f"now={now.strftime('%Y-%m-%d %H:%M')} | "
+            f"lat={latitude:.6f}, lon={longitude:.6f}"
+        ),
+    )
+
     if range_start > now:
+        add_weather_debug_log(
+            debug_nonce,
+            "조회 중단 | 시작시간이 현재보다 이후",
+            level="warning",
+        )
         raise ValueError("폭염 시작시간이 현재보다 이후입니다.")
 
     actual_end = min(range_end, now)
     if actual_end < range_start:
+        add_weather_debug_log(
+            debug_nonce,
+            "조회 중단 | 실제 조회 종료가 시작보다 이전",
+            level="warning",
+        )
         raise ValueError("조회할 폭염 시간대가 없습니다.")
 
     params = urllib.parse.urlencode(
@@ -953,6 +1045,17 @@ def fetch_kma_apparent_temperature_range(
             "authKey": auth_key,
         }
     )
+
+    add_weather_debug_log(
+        debug_nonce,
+        (
+            "500m 요청 파라미터 | "
+            f"obs=ta_chi | tm1={range_start.strftime('%Y%m%d%H%M')} | "
+            f"tm2={actual_end.strftime('%Y%m%d%H%M')} | itv=5 | "
+            f"lon={longitude:.6f} | lat={latitude:.6f}"
+        ),
+    )
+
     request = urllib.request.Request(
         f"{KMA_POINT_API_URL}?{params}",
         headers={"User-Agent": "checktemp-streamlit/1.0"},
@@ -961,35 +1064,139 @@ def fetch_kma_apparent_temperature_range(
     payload: bytes | None = None
     last_network_error: Exception | None = None
 
-    for _ in range(2):
+    for attempt in range(1, 3):
+        started = time_module.perf_counter()
+        add_weather_debug_log(
+            debug_nonce,
+            f"500m HTTP 시도 {attempt}/2 | timeout=20s",
+        )
+
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 payload = response.read()
+                elapsed = time_module.perf_counter() - started
+                status = getattr(response, "status", None) or response.getcode()
+
+            add_weather_debug_log(
+                debug_nonce,
+                (
+                    f"500m HTTP 성공 {attempt}/2 | status={status} | "
+                    f"elapsed={elapsed:.2f}s | bytes={len(payload)}"
+                ),
+            )
             break
-        except (TimeoutError, urllib.error.URLError) as error:
+
+        except urllib.error.HTTPError as error:
+            elapsed = time_module.perf_counter() - started
             last_network_error = error
+            body = safe_error_body(error)
+            add_weather_debug_log(
+                debug_nonce,
+                (
+                    f"500m HTTPError {attempt}/2 | code={error.code} | "
+                    f"reason={clean_text(error.reason)} | elapsed={elapsed:.2f}s"
+                    + (f" | body={body}" if body else "")
+                ),
+                level="error",
+            )
+
+        except urllib.error.URLError as error:
+            elapsed = time_module.perf_counter() - started
+            last_network_error = error
+            add_weather_debug_log(
+                debug_nonce,
+                (
+                    f"500m URLError {attempt}/2 | "
+                    f"reason={clean_text(getattr(error, 'reason', error))} | "
+                    f"elapsed={elapsed:.2f}s"
+                ),
+                level="error",
+            )
+
+        except TimeoutError as error:
+            elapsed = time_module.perf_counter() - started
+            last_network_error = error
+            add_weather_debug_log(
+                debug_nonce,
+                f"500m TimeoutError {attempt}/2 | elapsed={elapsed:.2f}s | {error}",
+                level="error",
+            )
+
+        except Exception as error:
+            elapsed = time_module.perf_counter() - started
+            last_network_error = error
+            add_weather_debug_log(
+                debug_nonce,
+                (
+                    f"500m 예외 {attempt}/2 | type={type(error).__name__} | "
+                    f"elapsed={elapsed:.2f}s | message={error}"
+                ),
+                level="error",
+            )
 
     if payload is None:
+        error_type = (
+            type(last_network_error).__name__
+            if last_network_error is not None
+            else "UnknownError"
+        )
+        add_weather_debug_log(
+            debug_nonce,
+            f"500m 범위조회 최종 실패 | last_error={error_type}",
+            level="error",
+        )
         raise TimeoutError(
             "기상청 서버 응답이 지연되고 있습니다. 잠시 후 다시 조회해 주세요."
         ) from last_network_error
 
     response_text = ""
+    used_encoding = ""
     for encoding in ("utf-8", "euc-kr"):
         try:
             response_text = payload.decode(encoding)
+            used_encoding = encoding
             break
         except UnicodeDecodeError:
             continue
 
     if not response_text:
         response_text = payload.decode("utf-8", errors="replace")
+        used_encoding = "utf-8-replace"
 
-    observations = parse_kma_temperature_observations(response_text)
+    add_weather_debug_log(
+        debug_nonce,
+        (
+            f"500m 응답 디코딩 | encoding={used_encoding} | "
+            f"chars={len(response_text)}"
+        ),
+    )
+
+    try:
+        observations = parse_kma_temperature_observations(response_text)
+    except Exception as error:
+        preview = re.sub(r"\s+", " ", response_text[:1000])
+        add_weather_debug_log(
+            debug_nonce,
+            (
+                f"500m 응답 파싱 실패 | type={type(error).__name__} | "
+                f"message={error} | preview={preview}"
+            ),
+            level="error",
+        )
+        raise
+
     values = [value for _, value in observations]
-
     minimum = min(values)
     maximum = max(values)
+
+    add_weather_debug_log(
+        debug_nonce,
+        (
+            f"500m 범위조회 성공 | observations={len(observations)} | "
+            f"first={observations[0][0]} | last={observations[-1][0]} | "
+            f"min={minimum:.1f} | max={maximum:.1f}"
+        ),
+    )
 
     return (
         format_number(minimum),
@@ -1268,6 +1475,11 @@ def record_heat_start_with_weather(
     record_start_time: bool = True,
 ) -> None:
     """폭염 시작시간을 기록하고 설정 시 체감온도도 자동 입력합니다."""
+    clear_weather_debug_log(nonce)
+    add_weather_debug_log(
+        nonce,
+        f"조회 트리거 | record_start_time={record_start_time}",
+    )
     if record_start_time:
         set_time_now("heat_start", nonce)
     notice_key = weather_notice_key(nonce)
@@ -1329,6 +1541,17 @@ def record_heat_start_with_weather(
     selected_date = st.session_state.get(f"date_{nonce}")
     if not isinstance(selected_date, date):
         selected_date = datetime.now(KST).date()
+
+    add_weather_debug_log(
+        nonce,
+        (
+            f"입력값 | date={selected_date.isoformat()} | site={site_name} | "
+            f"matched_site={matched_name} | "
+            f"work={work_start_text or '-'}~{work_end_text or '-'} | "
+            f"heat={heat_start_text or '-'}~{heat_end_text or '-'} | "
+            f"coords={coordinates[0]:.6f},{coordinates[1]:.6f}"
+        ),
+    )
 
     if selected_date > datetime.now(KST).date():
         work_start_value = parse_time_value(work_start_text)
@@ -1461,6 +1684,19 @@ def record_heat_start_with_weather(
         )
         if range_end < range_start:
             range_end += timedelta(days=1)
+            add_weather_debug_log(
+                nonce,
+                "자정 경과 인식 | 종료시간을 익일로 처리",
+            )
+
+        add_weather_debug_log(
+            nonce,
+            (
+                f"{range_label} 해석 완료 | "
+                f"start={range_start.strftime('%Y-%m-%d %H:%M')} | "
+                f"end={range_end.strftime('%Y-%m-%d %H:%M')}"
+            ),
+        )
 
         try:
             minimum, maximum, actual_end_text, observation_count = (
@@ -1470,6 +1706,7 @@ def record_heat_start_with_weather(
                     auth_key,
                     range_start,
                     range_end,
+                    debug_nonce=nonce,
                 )
             )
         except Exception as error:  # noqa: BLE001
@@ -2747,6 +2984,21 @@ def render_form(
                 st.warning(notice_message)
             else:
                 st.info(notice_message)
+
+        weather_debug_lines = st.session_state.get(
+            weather_debug_log_key(nonce),
+            [],
+        )
+        if weather_debug_lines:
+            with st.expander("기상조회 진단 로그", expanded=False):
+                st.caption(
+                    "오류 분석용 로그입니다. 인증키는 기록되지 않습니다. "
+                    "조회 실패 시 아래 내용을 복사해 전달해 주세요."
+                )
+                st.code(
+                    "\n".join(weather_debug_lines),
+                    language="text",
+                )
 
         st.caption(
             "휴게시간은 아래 조치사항의 휴식 버튼을 선택해 기록합니다."
