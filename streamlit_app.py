@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.29 · 2026-08-12"
+APP_VERSION = "Professional UI v3.30 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -113,27 +113,35 @@ LEGACY_COLUMNS = [
 
 TEAM_OPTIONS = ["중계팀", "영상팀"]
 
-SPORT_OPTIONS = ["야구", "골프", "기타스포츠"]
+SPORT_OPTIONS = ["야구", "남자골프", "여자골프", "기타스포츠(실내)"]
 
 SPORT_COMMON_MEASURES = {
-    "골프": (
+    "남자골프": (
         "- 중계차, 중계룸, 카메라룸, W/L룸, 몽골 텐트 냉방 가동\n"
-        "  (체감온도 30℃ 이하 유지)\n"
-        "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 얼음물,\n"
+        "  (냉방 공간 체감온도 27℃ 이하 유지)\n"
+        "- 개인별 아이스박스·우산 지급 및 생수·얼음물 비치\n"
+        "- 식염포도당·폭염질환 응급키트 위치 공유 및 사용 안내\n"
+        "- 외부 근무자 1시간 이내 10분 이상 휴식 부여"
+    ),
+    "여자골프": (
+        "- 중계차, 중계룸, 카메라룸, W/L룸, 몽골 텐트 냉방 가동\n"
+        "  (냉방 공간 체감온도 27℃ 이하 유지)\n"
+        "- 식염포도당·폭염질환 응급키트 위치 공유 및 생수·얼음물·\n"
         "  아이스박스 지급\n"
+        "- 필드카메라 촬영 대기시간 활용 및 W/L 카메라 교대근무\n"
         "- 폭염 시간대 불필요한 외부 활동 최소화"
     ),
     "야구": (
         "- 중계차·장비차·중계석·중계스태프실 냉방 가동\n"
-        "  · 냉방 공간 체감온도 30℃ 이하 유지\n"
+        "  · 냉방 공간 체감온도 27℃ 이하 유지\n"
         "- 생수·냉음료·식염포도당·폭염질환 응급키트 비치 및 위치 공유\n"
         "- 폭염시간대 불필요한 야외활동 최소화\n"
         "- 이상 증상 발생 시 10~15분간 냉방 공간에서 휴식하도록\n"
         "  제작팀과 사전 협의"
     ),
-    "기타스포츠": (
+    "기타스포츠(실내)": (
         "- 중계차, 휴게실, 체육관 냉방 가동\n"
-        "  (체감온도 30℃ 이하 유지)\n"
+        "  (냉방 공간 체감온도 27℃ 이하 유지)\n"
         "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 음료 지급\n"
         "- 폭염 시간대 불필요한 외부 활동 최소화\n"
         "- 중계차, 체육관 냉방 가동 공간에서 근무,\n"
@@ -154,7 +162,19 @@ LEGACY_COMMON_MEASURES = {
         "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
         "코스 이동 동선 및 업무강도 조정"
     ),
+    "남자골프": (
+        "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
+        "코스 이동 동선 및 업무강도 조정"
+    ),
+    "여자골프": (
+        "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
+        "코스 이동 동선 및 업무강도 조정"
+    ),
     "기타스포츠": (
+        "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
+        "폭염시간대 업무강도 조정"
+    ),
+    "기타스포츠(실내)": (
         "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
         "폭염시간대 업무강도 조정"
     ),
@@ -2491,15 +2511,22 @@ def infer_sport(site_name: Any) -> str:
     site = clean_text(site_name)
     if any(keyword in site for keyword in ("야구", "구장", "베이스볼")):
         return "야구"
-    if any(keyword in site for keyword in ("골프", "CC", "cc", "컨트리클럽")):
-        return "골프"
-    return "기타스포츠"
+    if any(keyword in site.upper() for keyword in ("KLPGA", "여자골프")):
+        return "여자골프"
+    if (
+        "KPGA" in site.upper()
+        or any(keyword in site for keyword in ("골프", "CC", "cc", "컨트리클럽"))
+    ):
+        return "남자골프"
+    return "기타스포츠(실내)"
 
 
 def normalize_sport(value: Any, site_name: Any = "") -> str:
     sport = clean_text(value)
-    if sport == "기타":
-        return "기타스포츠"
+    if sport in ("기타", "기타스포츠"):
+        return "기타스포츠(실내)"
+    if sport == "골프":
+        return infer_sport(site_name) if site_name else "남자골프"
     if sport in SPORT_OPTIONS:
         return sport
     return infer_sport(site_name)
@@ -2509,7 +2536,7 @@ def common_measures_for_sport(sport: Any) -> str:
     normalized = normalize_sport(sport)
     return SPORT_COMMON_MEASURES.get(
         normalized,
-        SPORT_COMMON_MEASURES["기타스포츠"],
+        SPORT_COMMON_MEASURES["기타스포츠(실내)"],
     )
 
 
@@ -3082,8 +3109,8 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
     except ValueError:
         work_date_text = work_date.replace("-", ".")
 
-    sport = clean_text(first.get("종목")) or "기타스포츠"
     site = clean_text(first.get("현장명")) or "현장명 미입력"
+    sport = normalize_sport(first.get("종목"), site)
     site_text = f"{sport} / {site}"
 
     heat_starts = sorted(unique_texts(records["폭염시작"].tolist()))
@@ -3460,7 +3487,10 @@ def render_form(
             SPORT_OPTIONS,
             index=option_index(
                 SPORT_OPTIONS,
-                editing_record.get("종목"),
+                normalize_sport(
+                    editing_record.get("종목"),
+                    editing_record.get("현장명"),
+                ),
             ),
             key=f"sport_{nonce}",
         )
@@ -4016,8 +4046,15 @@ def render_records(
         sport_filter != "전체"
         and not filtered.empty
     ):
+        normalized_sports = filtered.apply(
+            lambda row: normalize_sport(
+                row.get("종목"),
+                row.get("현장명"),
+            ),
+            axis=1,
+        )
         filtered = filtered[
-            filtered["종목"] == sport_filter
+            normalized_sports == sport_filter
         ]
 
     if not filtered.empty:
