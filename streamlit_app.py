@@ -17,10 +17,13 @@ from zoneinfo import ZoneInfo
 import gspread
 import pandas as pd
 import streamlit as st
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.18 · 2026-08-11"
+APP_VERSION = "Professional UI v3.20 · 2026-08-11"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -1603,16 +1606,34 @@ def auto_lookup_future_weather(nonce: int) -> None:
     record_heat_start_with_weather(nonce, False)
 
 
-def set_manual_time(
+def normalize_manual_time_field(
     field: str,
     nonce: int,
-    offset_minutes: int = 0,
+    *,
+    trigger_weather: bool = False,
 ) -> None:
-    """현재시간 또는 현재시간 기준 오프셋을 직접입력 시간칸에 넣습니다."""
-    target = datetime.now(KST) + timedelta(minutes=offset_minutes)
-    st.session_state[f"manual_{field}_{nonce}"] = target.strftime("%H:%M")
+    """직접 입력한 시간을 HH:MM으로 정규화하고 필요 시 예보 조회를 실행합니다.
 
-    if field in {"work_start", "work_end"}:
+    예: 2256 -> 22:56, 930 -> 09:30, 18 -> 18:00
+    """
+    key = f"manual_{field}_{nonce}"
+    raw_value = clean_text(st.session_state.get(key))
+
+    if not raw_value:
+        if trigger_weather:
+            auto_lookup_future_weather(nonce)
+        return
+
+    parsed = parse_time_value(raw_value)
+    if parsed is None:
+        # 잘못된 값은 사용자가 수정할 수 있도록 그대로 둡니다.
+        return
+
+    # callback 단계에서 widget state를 먼저 정규화하므로
+    # Enter 후 화면에도 즉시 HH:MM 형식으로 표시됩니다.
+    st.session_state[key] = format_time_value(parsed)
+
+    if trigger_weather:
         auto_lookup_future_weather(nonce)
 
 
@@ -1938,8 +1959,22 @@ def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
     )
 
 
+def _sheet_grid_borders(
+    style: str = "SOLID",
+) -> dict[str, Any]:
+    """Google Sheets 표 전체 셀에 적용할 네 방향 테두리입니다."""
+    color = {"red": 0.76, "green": 0.79, "blue": 0.84}
+    return {
+        edge: {
+            "style": style,
+            "color": color,
+        }
+        for edge in ("top", "bottom", "left", "right")
+    }
+
+
 def _data_row_format(row_number: int) -> dict[str, Any]:
-    """데이터 행 구분용 교차 음영·테두리·줄바꿈 서식입니다."""
+    """데이터 행 구분용 교차 음영·전체 테두리·줄바꿈 서식입니다."""
     background = (
         {"red": 1.0, "green": 1.0, "blue": 1.0}
         if row_number % 2 == 0
@@ -1953,12 +1988,7 @@ def _data_row_format(row_number: int) -> dict[str, Any]:
         },
         "verticalAlignment": "MIDDLE",
         "wrapStrategy": "WRAP",
-        "borders": {
-            "bottom": {
-                "style": "SOLID",
-                "color": {"red": 0.78, "green": 0.81, "blue": 0.86},
-            },
-        },
+        "borders": _sheet_grid_borders(),
     }
 
 
@@ -1972,6 +2002,7 @@ def _special_notes_format(row_number: int, has_notes: bool) -> dict[str, Any]:
             },
             "verticalAlignment": "MIDDLE",
             "wrapStrategy": "WRAP",
+            "borders": _sheet_grid_borders(),
         }
 
     base = _data_row_format(row_number)
@@ -1980,6 +2011,7 @@ def _special_notes_format(row_number: int, has_notes: bool) -> dict[str, Any]:
         "textFormat": base["textFormat"],
         "verticalAlignment": "MIDDLE",
         "wrapStrategy": "WRAP",
+        "borders": _sheet_grid_borders(),
     }
 
 
@@ -2014,7 +2046,7 @@ def normalize_existing_special_notes_format(
         return
 
     session_key = (
-        f"sheet_visual_v318_{worksheet.id}_{len(values)}_{len(COLUMNS)}"
+        f"sheet_visual_v320_{worksheet.id}_{len(values)}_{len(COLUMNS)}"
     )
     if st.session_state.get(session_key):
         return
@@ -2040,10 +2072,11 @@ def normalize_existing_special_notes_format(
                 "verticalAlignment": "MIDDLE",
                 "wrapStrategy": "WRAP",
                 "borders": {
-                    "bottom": {
+                    edge: {
                         "style": "SOLID_MEDIUM",
                         "color": {"red": 0.09, "green": 0.17, "blue": 0.30},
-                    },
+                    }
+                    for edge in ("top", "bottom", "left", "right")
                 },
             },
         }
@@ -2258,6 +2291,100 @@ def make_csv_bytes(dataframe: pd.DataFrame) -> bytes:
         )
 
     return output.getvalue().encode("utf-8-sig")
+
+
+def make_excel_bytes(dataframe: pd.DataFrame) -> bytes:
+    """전체 기록을 관리용 XLSX 파일로 생성합니다."""
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "전체기록"
+
+    header_fill = PatternFill("solid", fgColor="172B4D")
+    header_font = Font(color="FFFFFF", bold=True)
+    zebra_fill = PatternFill("solid", fgColor="F6F8FB")
+    notes_fill = PatternFill("solid", fgColor="FFECCD")
+    notes_font = Font(color="8C330D", bold=True)
+
+    thin_side = Side(style="thin", color="C4CAD4")
+    grid_border = Border(
+        left=thin_side,
+        right=thin_side,
+        top=thin_side,
+        bottom=thin_side,
+    )
+
+    for column_index, column_name in enumerate(COLUMNS, start=1):
+        cell = worksheet.cell(row=1, column=column_index, value=column_name)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = grid_border
+        cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+            wrap_text=True,
+        )
+
+    export_df = dataframe.reindex(columns=COLUMNS).fillna("")
+
+    for row_index, (_, row) in enumerate(export_df.iterrows(), start=2):
+        for column_index, column_name in enumerate(COLUMNS, start=1):
+            value = clean_text(row.get(column_name, ""))
+            cell = worksheet.cell(
+                row=row_index,
+                column=column_index,
+                value=value,
+            )
+            cell.border = grid_border
+            cell.alignment = Alignment(
+                vertical="center",
+                wrap_text=True,
+            )
+            if row_index % 2 == 1:
+                cell.fill = zebra_fill
+
+        notes_cell = worksheet.cell(
+            row=row_index,
+            column=COLUMNS.index("특이사항") + 1,
+        )
+        if clean_text(notes_cell.value):
+            notes_cell.fill = notes_fill
+            notes_cell.font = notes_font
+
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = (
+        f"A1:{get_column_letter(len(COLUMNS))}{max(1, worksheet.max_row)}"
+    )
+
+    preferred_widths = {
+        "id": 18,
+        "작업날짜": 12,
+        "종목": 12,
+        "현장명": 24,
+        "팀": 10,
+        "근무시작": 10,
+        "근무종료": 10,
+        "작성자": 12,
+        "폭염시작": 10,
+        "폭염종료": 10,
+        "체감온도": 12,
+        "휴게시간": 10,
+        "공통 조치사항": 48,
+        "조치사항": 34,
+        "특이사항": 36,
+        "등록시간": 20,
+        "수정시간": 20,
+    }
+
+    for index, column_name in enumerate(COLUMNS, start=1):
+        worksheet.column_dimensions[
+            get_column_letter(index)
+        ].width = preferred_widths.get(column_name, 16)
+
+    worksheet.row_dimensions[1].height = 26
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def init_state() -> None:
@@ -2546,47 +2673,28 @@ def render_form(
             work_start_input = st.text_input(
                 "근무 시작 *",
                 value=clean_text(editing_record.get("근무시작")),
-                placeholder="예: 09:00 또는 930",
+                placeholder="예: 2256 → 22:56",
                 key=f"manual_work_start_{nonce}",
-                on_change=auto_lookup_future_weather,
-                args=(nonce,),
+                on_change=normalize_manual_time_field,
+                args=("work_start", nonce),
+                kwargs={"trigger_weather": True},
             )
-            start_now, start_before = st.columns(2)
-            with start_now:
-                st.button(
-                    "현재시간",
-                    key=f"work_start_now_{nonce}",
-                    use_container_width=True,
-                    on_click=set_manual_time,
-                    args=("work_start", nonce, 0),
-                )
-            with start_before:
-                st.button(
-                    "30분 전",
-                    key=f"work_start_before_{nonce}",
-                    use_container_width=True,
-                    on_click=set_manual_time,
-                    args=("work_start", nonce, -30),
-                )
 
         with work_right:
             work_end_input = st.text_input(
                 "근무 종료 *",
                 value=clean_text(editing_record.get("근무종료")),
-                placeholder="예: 18:00 또는 18",
+                placeholder="예: 1830 → 18:30",
                 key=f"manual_work_end_{nonce}",
-                on_change=auto_lookup_future_weather,
-                args=(nonce,),
-            )
-            st.button(
-                "현재시간",
-                key=f"work_end_now_{nonce}",
-                use_container_width=True,
-                on_click=set_manual_time,
-                args=("work_end", nonce, 0),
+                on_change=normalize_manual_time_field,
+                args=("work_end", nonce),
+                kwargs={"trigger_weather": True},
             )
 
-        st.caption("직접입력은 09:30, 930, 18처럼 입력해도 됩니다.")
+        st.caption(
+            "숫자만 입력해도 됩니다. Enter를 누르면 "
+            "2256→22:56, 930→09:30, 18→18:00으로 자동 변환됩니다."
+        )
 
         heat_left, heat_right = st.columns(2)
 
@@ -2594,40 +2702,20 @@ def render_form(
             heat_start_input = st.text_input(
                 "폭염 시작",
                 value=clean_text(editing_record.get("폭염시작")),
-                placeholder="예: 13:00 또는 1300",
+                placeholder="예: 1330 → 13:30",
                 key=f"manual_heat_start_{nonce}",
+                on_change=normalize_manual_time_field,
+                args=("heat_start", nonce),
             )
-            heat_start_now, heat_start_before = st.columns(2)
-            with heat_start_now:
-                st.button(
-                    "현재시간",
-                    key=f"heat_start_now_{nonce}",
-                    use_container_width=True,
-                    on_click=set_manual_time,
-                    args=("heat_start", nonce, 0),
-                )
-            with heat_start_before:
-                st.button(
-                    "30분 전",
-                    key=f"heat_start_before_{nonce}",
-                    use_container_width=True,
-                    on_click=set_manual_time,
-                    args=("heat_start", nonce, -30),
-                )
 
         with heat_right:
             heat_end_input = st.text_input(
                 "폭염 종료",
                 value=clean_text(editing_record.get("폭염종료")),
-                placeholder="예: 17:00 또는 17",
+                placeholder="예: 1700 → 17:00",
                 key=f"manual_heat_end_{nonce}",
-            )
-            st.button(
-                "현재시간",
-                key=f"heat_end_now_{nonce}",
-                use_container_width=True,
-                on_click=set_manual_time,
-                args=("heat_end", nonce, 0),
+                on_change=normalize_manual_time_field,
+                args=("heat_end", nonce),
             )
 
         work_start = parse_time_value(work_start_input)
@@ -3068,22 +3156,25 @@ def render_records(
 
     with download_col:
         st.download_button(
-            "현재 목록 CSV",
-            data=make_csv_bytes(
-                filtered.drop(
-                    columns=["_sort_key"],
-                    errors="ignore",
-                )
-            ),
+            "엑셀로 추출하기",
+            data=make_excel_bytes(records),
             file_name=(
-                "현장_폭염_조치_기록_"
-                f"{datetime.now(KST).strftime('%Y%m%d')}"
-                ".csv"
+                "현장_폭염_조치_전체기록_"
+                f"{datetime.now(KST).strftime('%Y%m%d_%H%M')}"
+                ".xlsx"
             ),
-            mime="text/csv",
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
             use_container_width=True,
-            disabled=filtered.empty,
+            disabled=records.empty,
         )
+
+    st.caption(
+        "엑셀 파일은 필터와 관계없이 전체 기록을 저장하며, "
+        "헤더·테두리·줄바꿈·특이사항 강조가 포함됩니다."
+    )
 
     if filtered.empty:
         st.info("조건에 맞는 기록이 없습니다.")
