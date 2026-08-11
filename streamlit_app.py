@@ -1270,10 +1270,22 @@ def record_heat_start_with_weather(
                 forecast_end,
             )
         except Exception as error:  # noqa: BLE001
+            if isinstance(error, urllib.error.HTTPError) and error.code == 403:
+                error_detail = (
+                    "현재 인증키에 '4.3 단기예보조회' 권한이 없습니다. "
+                    "기상청 API허브에서 해당 API를 활용신청한 뒤 다시 조회해 "
+                    "주세요. 기존에 승인된 2.2 초단기예보는 약 6시간 범위라 "
+                    "미래 날짜 전체 조회에는 사용할 수 없습니다."
+                )
+            else:
+                error_detail = (
+                    "날짜가 단기예보 범위인지 확인해 주세요. "
+                    f"({error})"
+                )
             st.session_state[notice_key] = (
                 "warning",
                 "선택한 미래 날짜의 예상 체감온도 조회에 실패했습니다. "
-                f"날짜가 단기예보 범위인지 확인해 주세요. ({error})",
+                f"{error_detail}",
             )
             return
 
