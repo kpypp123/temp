@@ -23,7 +23,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.20 · 2026-08-11"
+APP_VERSION = "Professional UI v3.21 · 2026-08-11"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -933,64 +933,95 @@ def fetch_kma_apparent_temperature_range(
     range_start: datetime,
     range_end: datetime,
 ) -> tuple[str, str, str, int]:
-    """지정한 시간대의 500m 격자 체감온도 최저·최고를 조회합니다."""
+    """지정 시간대의 500m 격자 체감온도 최저·최고를 조회합니다.
+
+    기상청 특정지점 단일요소 API는 1회 최대 조회기간이 60분이므로
+    긴 근무시간은 60분 이하 구간으로 자동 분할해 조회한 뒤 합산합니다.
+    """
     now = datetime.now(KST).replace(second=0, microsecond=0)
     if range_start > now:
-        raise ValueError("폭염 시작시간이 현재보다 이후입니다.")
+        raise ValueError("조회 시작시간이 현재보다 이후입니다.")
 
     actual_end = min(range_end, now)
     if actual_end < range_start:
-        raise ValueError("조회할 폭염 시간대가 없습니다.")
+        raise ValueError("조회할 시간대가 없습니다.")
 
-    params = urllib.parse.urlencode(
-        {
-            "obs": "ta_chi",
-            "tm1": range_start.strftime("%Y%m%d%H%M"),
-            "tm2": actual_end.strftime("%Y%m%d%H%M"),
-            "itv": "5",
-            "lon": f"{longitude:.6f}",
-            "lat": f"{latitude:.6f}",
-            "authKey": auth_key,
-        }
-    )
-    request = urllib.request.Request(
-        f"{KMA_POINT_API_URL}?{params}",
-        headers={"User-Agent": "checktemp-streamlit/1.0"},
-    )
-    payload: bytes | None = None
-    last_network_error: Exception | None = None
-    for _ in range(2):
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                payload = response.read()
+    observations_by_time: dict[str, float] = {}
+    chunk_start = range_start
+    chunk_count = 0
+
+    while chunk_start <= actual_end:
+        # API의 최대 조회기간 60분 제한을 지킵니다.
+        chunk_end = min(chunk_start + timedelta(minutes=60), actual_end)
+        chunk_count += 1
+
+        params = urllib.parse.urlencode(
+            {
+                "obs": "ta_chi",
+                "tm1": chunk_start.strftime("%Y%m%d%H%M"),
+                "tm2": chunk_end.strftime("%Y%m%d%H%M"),
+                "itv": "5",
+                "lon": f"{longitude:.6f}",
+                "lat": f"{latitude:.6f}",
+                "authKey": auth_key,
+            }
+        )
+        request = urllib.request.Request(
+            f"{KMA_POINT_API_URL}?{params}",
+            headers={"User-Agent": "checktemp-streamlit/1.0"},
+        )
+
+        payload: bytes | None = None
+        last_network_error: Exception | None = None
+
+        # 각 60분 구간은 최대 2회 시도합니다.
+        for _ in range(2):
+            try:
+                with urllib.request.urlopen(request, timeout=12) as response:
+                    payload = response.read()
+                break
+            except (TimeoutError, urllib.error.URLError) as error:
+                last_network_error = error
+
+        if payload is None:
+            raise TimeoutError(
+                f"기상청 조회가 지연되고 있습니다. "
+                f"{chunk_start.strftime('%H:%M')}~"
+                f"{chunk_end.strftime('%H:%M')} 구간 조회에 실패했습니다."
+            ) from last_network_error
+
+        response_text = ""
+        for encoding in ("utf-8", "euc-kr"):
+            try:
+                response_text = payload.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if not response_text:
+            response_text = payload.decode("utf-8", errors="replace")
+
+        chunk_observations = parse_kma_temperature_observations(response_text)
+        for timestamp, value in chunk_observations:
+            observations_by_time[timestamp] = value
+
+        if chunk_end >= actual_end:
             break
-        except (TimeoutError, urllib.error.URLError) as error:
-            last_network_error = error
 
-    if payload is None:
-        raise TimeoutError(
-            "기상청 서버 응답이 지연되고 있습니다. 잠시 후 다시 조회해 주세요."
-        ) from last_network_error
+        # 경계값 중복은 timestamp dict에서 제거되므로 정확히 60분씩 이동합니다.
+        chunk_start = chunk_end
 
-    response_text = ""
-    for encoding in ("utf-8", "euc-kr"):
-        try:
-            response_text = payload.decode(encoding)
-            break
-        except UnicodeDecodeError:
-            continue
-    if not response_text:
-        response_text = payload.decode("utf-8", errors="replace")
+    if not observations_by_time:
+        raise ValueError("기상청 응답에서 체감온도 자료를 찾지 못했습니다.")
 
-    observations = parse_kma_temperature_observations(response_text)
-    values = [value for _, value in observations]
+    values = list(observations_by_time.values())
     minimum = min(values)
     maximum = max(values)
+
     return (
         format_number(minimum),
         format_number(maximum),
         actual_end.strftime("%H:%M"),
-        len(values),
+        len(observations_by_time),
     )
 
 
