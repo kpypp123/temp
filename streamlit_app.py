@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import base64
 import html
 import json
 import io
@@ -12,6 +13,8 @@ import urllib.request
 import urllib.error
 import uuid
 import time as time_module
+import zipfile
+from pathlib import Path
 from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -25,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.28 · 2026-08-12"
+APP_VERSION = "Professional UI v3.29 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3018,6 +3021,151 @@ def make_csv_bytes(dataframe: pd.DataFrame) -> bytes:
     return output.getvalue().encode("utf-8-sig")
 
 
+def unique_texts(values: list[Any]) -> list[str]:
+    results: list[str] = []
+    for value in values:
+        text = clean_text(value)
+        if text and text not in results:
+            results.append(text)
+    return results
+
+
+def report_team_summary(records: pd.DataFrame, team: str) -> str:
+    team_rows = records[records["팀"] == team]
+    if team_rows.empty:
+        return "- 기록 없음"
+
+    measures = unique_texts(team_rows["조치사항"].tolist())
+    rest_total = sum(
+        parse_int(value)
+        for value in team_rows["휴게시간"].tolist()
+    )
+    parts = [item.replace(" | ", " / ") for item in measures]
+    if rest_total > 0:
+        parts.append(f"누적 휴게시간 {rest_total}분")
+    return "- " + (" / ".join(parts) if parts else "조치사항 기록 없음")
+
+
+def report_team_work_time(records: pd.DataFrame, team: str) -> str:
+    team_rows = records[records["팀"] == team]
+    if team_rows.empty:
+        return f"{team} -"
+
+    starts = sorted(unique_texts(team_rows["근무시작"].tolist()))
+    ends = sorted(unique_texts(team_rows["근무종료"].tolist()))
+    if not starts or not ends:
+        return f"{team} -"
+    return f"{team} {starts[0]}~{ends[-1]}"
+
+
+def replace_report_text(xml_text: str, old: str, new: str) -> str:
+    return xml_text.replace(old, html.escape(new, quote=False), 1)
+
+
+def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
+    """같은 날짜·현장의 기록을 원본 HWPX 양식에 채웁니다."""
+    if records.empty:
+        raise ValueError("보고서로 만들 기록이 없습니다.")
+
+    template_path = Path(__file__).with_name("report_template.b64")
+    template_bytes = base64.b64decode(
+        template_path.read_text(encoding="ascii").strip()
+    )
+
+    first = records.iloc[0]
+    work_date = clean_text(first.get("작업날짜"))
+    try:
+        work_date_text = datetime.strptime(
+            work_date,
+            "%Y-%m-%d",
+        ).strftime("%Y.%m.%d")
+    except ValueError:
+        work_date_text = work_date.replace("-", ".")
+
+    sport = clean_text(first.get("종목")) or "기타스포츠"
+    site = clean_text(first.get("현장명")) or "현장명 미입력"
+    site_text = f"{sport} / {site}"
+
+    heat_starts = sorted(unique_texts(records["폭염시작"].tolist()))
+    heat_ends = sorted(unique_texts(records["폭염종료"].tolist()))
+    heat_time = (
+        f"{heat_starts[0]}~{heat_ends[-1]}"
+        if heat_starts and heat_ends
+        else "해당 없음"
+    )
+
+    temperatures: list[float] = []
+    for value in records["체감온도"].tolist():
+        temperatures.extend(temperature_numbers(value))
+    if temperatures:
+        low = format_number(min(temperatures))
+        high = format_number(max(temperatures))
+        temperature_text = (
+            f"{low}℃" if low == high else f"{low}℃~{high}℃"
+        )
+    else:
+        temperature_text = "미기록"
+
+    common_values = unique_texts(records["공통 조치사항"].tolist())
+    common_text = common_values[0] if common_values else common_measures_for_sport(sport)
+    common_lines = [
+        line.strip().lstrip("- ").strip()
+        for line in common_text.splitlines()
+        if line.strip()
+    ]
+    while len(common_lines) < 3:
+        common_lines.append("")
+
+    notes = " / ".join(unique_texts(records["특이사항"].tolist()))
+    notes = notes or "특이사항 없음"
+
+    replacements = [
+        ("종목 / 장소명", site_text),
+        ("2026.08.10", work_date_text),
+        ("중계팀 08:00~17:00", report_team_work_time(records, "중계팀")),
+        ("영상팀 08:00~17:00", report_team_work_time(records, "영상팀")),
+        ("08:00~15:00", heat_time),
+        ("31℃~33℃", temperature_text),
+        (
+            "- 중계차, 중계석, 휴게실 냉방 가동(체감온도 OO℃ 이하 유지)",
+            f"- {common_lines[0]}",
+        ),
+        (
+            "식염포도당, 폭염질환 응급키트 위치 공유 및 생수 및 이온 음료",
+            common_lines[1],
+        ),
+        (" 지급", ""),
+        ("  - 폭염 시간대 불필요한 외부 활동 최소화", f"  - {common_lines[2]}"),
+        ("영상팀 필드카메라 중요 선수 외 이글 또는 버디", notes),
+        ("상황까지", ""),
+        ("만", ""),
+        ("                                     촬영하고 그 외 추가 휴식시간 부여", ""),
+        ("  - 예시 2) 일정 조정 : 기존 출근시간 대비 1시간 조기 출근하여 실외 작업을 조기", ""),
+        ("                       진행하고, 폭염시간대에는 1시간 이내 20분 이상 휴게시간을", ""),
+        ("                       확보하여 운영", ""),
+        ("- 중계차 및 중계석 등 냉방공간 근무 → ", report_team_summary(records, "중계팀")),
+        ("폭염작업 해당 없음", ""),
+        ("- 1시간 이내 10분 이상 휴게시간 부여", report_team_summary(records, "영상팀")),
+        (" · 필드카메라 : 중요 선수 외 이글·버디 워킹 촬영 후 휴식", ""),
+        (" · W/L 카메라 : 혹서기 지원인력을 활용한 교대근무 실시", ""),
+    ]
+
+    source = io.BytesIO(template_bytes)
+    output = io.BytesIO()
+    with zipfile.ZipFile(source, "r") as input_zip:
+        with zipfile.ZipFile(output, "w") as output_zip:
+            for info in input_zip.infolist():
+                payload = input_zip.read(info.filename)
+                if info.filename == "Contents/section0.xml":
+                    section_xml = payload.decode("utf-8")
+                    for old, new in replacements:
+                        section_xml = replace_report_text(section_xml, old, new)
+                    payload = section_xml.encode("utf-8")
+                output_zip.writestr(info, payload)
+
+    return output.getvalue()
+
+
 def make_excel_bytes(dataframe: pd.DataFrame) -> bytes:
     """전체 기록을 관리용 XLSX 파일로 생성합니다."""
     workbook = Workbook()
@@ -3920,6 +4068,59 @@ def render_records(
     if filtered.empty:
         st.info("조건에 맞는 기록이 없습니다.")
         return
+
+    st.markdown("### 폭염 보고서 다운로드")
+    st.caption(
+        "같은 작업날짜와 현장명의 중계팀·영상팀 기록을 "
+        "한글 HWPX 보고서 한 장으로 묶습니다."
+    )
+
+    report_candidates = (
+        filtered[["작업날짜", "현장명"]]
+        .drop_duplicates()
+        .to_dict("records")
+    )
+    report_labels = [
+        f"{clean_text(item['작업날짜'])} · {clean_text(item['현장명'])}"
+        for item in report_candidates
+    ]
+    selected_report_label = st.selectbox(
+        "보고서 대상",
+        report_labels,
+        key="report_target",
+    )
+    selected_report_index = report_labels.index(selected_report_label)
+    selected_report = report_candidates[selected_report_index]
+    report_rows = filtered[
+        (filtered["작업날짜"] == selected_report["작업날짜"])
+        & (filtered["현장명"] == selected_report["현장명"])
+    ]
+
+    try:
+        report_bytes = make_heat_report_bytes(report_rows)
+        safe_site_name = re.sub(
+            r"[^0-9A-Za-z가-힣_-]+",
+            "_",
+            clean_text(selected_report["현장명"]),
+        ).strip("_") or "현장"
+        report_date_name = clean_text(
+            selected_report["작업날짜"]
+        ).replace("-", "")
+        st.download_button(
+            "한글 보고서(HWPX) 다운로드",
+            data=report_bytes,
+            file_name=(
+                f"폭염작업_조치_결과_보고서_"
+                f"{report_date_name}_{safe_site_name}.hwpx"
+            ),
+            mime=(
+                "application/vnd.hancom.hwpx"
+            ),
+            use_container_width=True,
+            key="download_heat_report",
+        )
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"보고서를 만들 수 없습니다: {exc}")
 
     admin_pin = get_secret(
         ("security", "admin_pin")
