@@ -20,7 +20,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.15 · 2026-08-11"
+APP_VERSION = "Professional UI v3.16 · 2026-08-11"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -45,6 +45,25 @@ FORECAST_HEAT_THRESHOLD = 31.0
 COLUMNS = [
     "id",
     "작업날짜",
+    "종목",
+    "현장명",
+    "팀",
+    "근무시작",
+    "근무종료",
+    "작성자",
+    "폭염시작",
+    "폭염종료",
+    "체감온도",
+    "휴게시간",
+    "조치사항",
+    "특이사항",
+    "등록시간",
+    "수정시간",
+]
+
+LEGACY_COLUMNS = [
+    "id",
+    "작업날짜",
     "현장명",
     "팀",
     "근무시작",
@@ -64,6 +83,14 @@ COLUMNS = [
 ]
 
 TEAM_OPTIONS = ["중계팀", "영상팀"]
+
+SPORT_OPTIONS = ["야구", "골프", "기타"]
+
+SPORT_COMMON_MEASURES = {
+    "야구": "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | 폭염시간대 업무강도 조정",
+    "골프": "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | 코스 이동 동선 및 업무강도 조정",
+    "기타": "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | 폭염시간대 업무강도 조정",
+}
 
 MEASURE_OPTIONS = [
     "1시간 이내 10분 이상 휴식",
@@ -1651,17 +1678,78 @@ def get_worksheet() -> gspread.Worksheet:
     return spreadsheet.worksheet(worksheet_name)
 
 
+def column_letter(index: int) -> str:
+    result = ""
+    value = index
+    while value:
+        value, remainder = divmod(value - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def infer_sport(site_name: Any) -> str:
+    site = clean_text(site_name)
+    if any(keyword in site for keyword in ("야구", "구장", "베이스볼")):
+        return "야구"
+    if any(keyword in site for keyword in ("골프", "CC", "cc", "컨트리클럽")):
+        return "골프"
+    return "기타"
+
+
+def migrate_legacy_sheet(
+    worksheet: gspread.Worksheet,
+    values: list[list[str]],
+) -> None:
+    backup_name = (
+        f"{worksheet.title}_backup_"
+        f"{datetime.now(KST).strftime('%Y%m%d_%H%M%S')}"
+    )
+    worksheet.duplicate(new_sheet_name=backup_name)
+
+    old_headers = [clean_text(value) for value in values[0]]
+    migrated_rows: list[list[str]] = [COLUMNS]
+    for raw_row in values[1:]:
+        padded = raw_row + [""] * (len(old_headers) - len(raw_row))
+        old_record = {
+            header: clean_text(padded[index])
+            for index, header in enumerate(old_headers)
+            if header
+        }
+        if not any(old_record.values()):
+            continue
+        new_record = {
+            column: old_record.get(column, "")
+            for column in COLUMNS
+        }
+        new_record["종목"] = (
+            old_record.get("종목")
+            or infer_sport(old_record.get("현장명"))
+        )
+        migrated_rows.append(record_values(new_record))
+
+    worksheet.clear()
+    worksheet.update(
+        range_name="A1",
+        values=migrated_rows,
+        value_input_option="USER_ENTERED",
+    )
+
+
 def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
     values = worksheet.get_all_values()
 
     if not values:
         worksheet.update(
-            range_name="A1:R1",
+            range_name=f"A1:{column_letter(len(COLUMNS))}1",
             values=[COLUMNS],
         )
         return COLUMNS
 
     headers = [clean_text(value) for value in values[0]]
+
+    if headers[: len(LEGACY_COLUMNS)] == LEGACY_COLUMNS:
+        migrate_legacy_sheet(worksheet, values)
+        return COLUMNS
 
     if headers[: len(COLUMNS)] != COLUMNS:
         missing = [
@@ -1680,6 +1768,33 @@ def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
         )
 
     return headers
+
+
+def format_special_notes_row(
+    worksheet: gspread.Worksheet,
+    row_number: int,
+    notes: Any,
+) -> None:
+    end_column = column_letter(len(COLUMNS))
+    has_notes = bool(clean_text(notes))
+    worksheet.format(
+        f"A{row_number}:{end_column}{row_number}",
+        {
+            "backgroundColor": (
+                {"red": 1.0, "green": 0.93, "blue": 0.80}
+                if has_notes
+                else {"red": 1.0, "green": 1.0, "blue": 1.0}
+            ),
+            "textFormat": {
+                "bold": has_notes,
+                "foregroundColor": (
+                    {"red": 0.55, "green": 0.20, "blue": 0.05}
+                    if has_notes
+                    else {"red": 0.0, "green": 0.0, "blue": 0.0}
+                ),
+            },
+        },
+    )
 
 
 def load_records() -> pd.DataFrame:
@@ -1728,6 +1843,15 @@ def append_record(record: dict[str, Any]) -> None:
         value_input_option="USER_ENTERED",
         insert_data_option="INSERT_ROWS",
     )
+    try:
+        format_special_notes_row(
+            worksheet,
+            len(worksheet.get_all_values()),
+            record.get("특이사항"),
+        )
+    except Exception:  # noqa: BLE001
+        # 행 저장은 성공했으므로 서식 오류 때문에 중복 저장되지 않게 합니다.
+        pass
 
 
 def update_record(
@@ -1745,10 +1869,21 @@ def update_record(
         )
 
     worksheet.update(
-        range_name=f"A{cell.row}:R{cell.row}",
+        range_name=(
+            f"A{cell.row}:"
+            f"{column_letter(len(COLUMNS))}{cell.row}"
+        ),
         values=[record_values(record)],
         value_input_option="USER_ENTERED",
     )
+    try:
+        format_special_notes_row(
+            worksheet,
+            cell.row,
+            record.get("특이사항"),
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def delete_record(record_id: str) -> None:
@@ -2031,6 +2166,16 @@ def render_form(
             key=f"date_{nonce}",
         )
 
+        sport = st.selectbox(
+            "종목 *",
+            SPORT_OPTIONS,
+            index=option_index(
+                SPORT_OPTIONS,
+                editing_record.get("종목"),
+            ),
+            key=f"sport_{nonce}",
+        )
+
         site = st.text_input(
             "현장명 *",
             value=clean_text(
@@ -2208,6 +2353,14 @@ def render_form(
             '<div class="field-label">시행한 조치</div>',
             unsafe_allow_html=True,
         )
+        common_measures = SPORT_COMMON_MEASURES.get(
+            sport,
+            SPORT_COMMON_MEASURES["기타"],
+        )
+        st.info(
+            f"{sport} 기본 공통조치가 자동으로 저장됩니다: "
+            f"{common_measures}"
+        )
         st.caption("복수 선택 가능합니다. 다시 누르면 선택이 해제됩니다.")
 
         selected_measure_list = list(
@@ -2290,7 +2443,7 @@ def render_form(
         )
 
         notes = st.text_area(
-            "상세 조치 및 특이사항",
+            "특이사항",
             value=clean_text(
                 editing_record.get("특이사항")
             ),
@@ -2387,27 +2540,24 @@ def render_form(
     record = {
         "id": record_id,
         "작업날짜": work_date.isoformat(),
+        "종목": sport,
         "현장명": site.strip(),
         "팀": team,
         "근무시작": work_start_text,
         "근무종료": work_end_text,
         "작성자": author.strip(),
-        "작업인원": "",
         "폭염시작": heat_start_text,
         "폭염종료": heat_end_text,
         "체감온도": normalized_temperature,
-        "휴게시작": (
-            clean_text(editing_record.get("휴게시작"))
-            if editing_id
-            else ""
-        ),
-        "휴게종료": (
-            clean_text(editing_record.get("휴게종료"))
-            if editing_id
-            else ""
-        ),
         "휴게시간": str(rest_minutes),
-        "조치사항": " | ".join(measures),
+        "조치사항": " | ".join(
+            [
+                part.strip()
+                for part in common_measures.split("|")
+                if part.strip()
+            ]
+            + measures
+        ),
         "특이사항": notes.strip(),
         "등록시간": created_at,
         "수정시간": now_text,
@@ -2505,7 +2655,7 @@ def render_records(
         expanded=False,
     ):
         search_text = st.text_input(
-            "현장명·작성자 검색",
+            "종목·현장명·작성자 검색",
             placeholder="검색어 입력",
             key="record_search",
         )
@@ -2516,11 +2666,26 @@ def render_records(
             key="team_filter",
         )
 
+        sport_filter = st.selectbox(
+            "종목",
+            ["전체"] + SPORT_OPTIONS,
+            key="sport_filter",
+        )
+
     filtered = records.copy()
 
     if search_text.strip() and not filtered.empty:
         keyword = search_text.strip().lower()
         mask = (
+            filtered["종목"]
+            .astype(str)
+            .str.lower()
+            .str.contains(
+                keyword,
+                na=False,
+                regex=False,
+            )
+            |
             filtered["현장명"]
             .astype(str)
             .str.lower()
@@ -2547,6 +2712,14 @@ def render_records(
     ):
         filtered = filtered[
             filtered["팀"] == team_filter
+        ]
+
+    if (
+        sport_filter != "전체"
+        and not filtered.empty
+    ):
+        filtered = filtered[
+            filtered["종목"] == sport_filter
         ]
 
     if not filtered.empty:
@@ -2625,6 +2798,10 @@ def render_records(
                 clean_text(record.get("팀"))
                 or "팀 미입력"
             )
+            sport_text = (
+                clean_text(record.get("종목"))
+                or "종목 미입력"
+            )
             author_text = (
                 clean_text(record.get("작성자"))
                 or "-"
@@ -2668,7 +2845,7 @@ def render_records(
             )
 
             st.caption(
-                f"{work_date} · {team_text} · "
+                f"{work_date} · {sport_text} · {team_text} · "
                 f"작성자 {author_text}"
             )
 
