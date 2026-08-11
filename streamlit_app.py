@@ -20,7 +20,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.17 · 2026-08-11"
+APP_VERSION = "Professional UI v3.18 · 2026-08-11"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -155,8 +155,6 @@ LEGACY_COMMON_MEASURES = {
 MEASURE_OPTIONS = [
     "1시간 이내 10분 이상 휴식",
     "2시간 이내 20분 이상 휴식",
-    "냉방기 가동 25도 이하",
-    "제작팀 협의 조정",
 ]
 
 TIME_FIELD_COLUMNS = {
@@ -686,13 +684,19 @@ def temperature_display(value: Any) -> str:
 
 
 def parse_time_value(value: Any, default: time | None = None) -> time | None:
+    """시간을 HH:MM 형식으로 해석합니다. 930→09:30, 18→18:00도 허용합니다."""
     text = clean_text(value)
     if not text:
         return default
 
-    normalized = text.replace("시", ":00")
+    normalized = text.replace("시", ":00").replace(" ", "")
+
     if re.fullmatch(r"\d{1,2}", normalized):
         normalized = f"{normalized}:00"
+    elif re.fullmatch(r"\d{3}", normalized):
+        normalized = f"0{normalized[0]}:{normalized[1:]}"
+    elif re.fullmatch(r"\d{4}", normalized):
+        normalized = f"{normalized[:2]}:{normalized[2:]}"
 
     for fmt in ("%H:%M", "%H:%M:%S"):
         try:
@@ -1599,6 +1603,19 @@ def auto_lookup_future_weather(nonce: int) -> None:
     record_heat_start_with_weather(nonce, False)
 
 
+def set_manual_time(
+    field: str,
+    nonce: int,
+    offset_minutes: int = 0,
+) -> None:
+    """현재시간 또는 현재시간 기준 오프셋을 직접입력 시간칸에 넣습니다."""
+    target = datetime.now(KST) + timedelta(minutes=offset_minutes)
+    st.session_state[f"manual_{field}_{nonce}"] = target.strftime("%H:%M")
+
+    if field in {"work_start", "work_end"}:
+        auto_lookup_future_weather(nonce)
+
+
 def clear_time(field: str, nonce: int) -> None:
     st.session_state[time_state_key(field, nonce)] = None
 
@@ -1921,6 +1938,51 @@ def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
     )
 
 
+def _data_row_format(row_number: int) -> dict[str, Any]:
+    """데이터 행 구분용 교차 음영·테두리·줄바꿈 서식입니다."""
+    background = (
+        {"red": 1.0, "green": 1.0, "blue": 1.0}
+        if row_number % 2 == 0
+        else {"red": 0.965, "green": 0.973, "blue": 0.984}
+    )
+    return {
+        "backgroundColor": background,
+        "textFormat": {
+            "bold": False,
+            "foregroundColor": {"red": 0.08, "green": 0.10, "blue": 0.14},
+        },
+        "verticalAlignment": "MIDDLE",
+        "wrapStrategy": "WRAP",
+        "borders": {
+            "bottom": {
+                "style": "SOLID",
+                "color": {"red": 0.78, "green": 0.81, "blue": 0.86},
+            },
+        },
+    }
+
+
+def _special_notes_format(row_number: int, has_notes: bool) -> dict[str, Any]:
+    if has_notes:
+        return {
+            "backgroundColor": {"red": 1.0, "green": 0.93, "blue": 0.80},
+            "textFormat": {
+                "bold": True,
+                "foregroundColor": {"red": 0.55, "green": 0.20, "blue": 0.05},
+            },
+            "verticalAlignment": "MIDDLE",
+            "wrapStrategy": "WRAP",
+        }
+
+    base = _data_row_format(row_number)
+    return {
+        "backgroundColor": base["backgroundColor"],
+        "textFormat": base["textFormat"],
+        "verticalAlignment": "MIDDLE",
+        "wrapStrategy": "WRAP",
+    }
+
+
 def format_special_notes_cell(
     worksheet: gspread.Worksheet,
     row_number: int,
@@ -1930,44 +1992,16 @@ def format_special_notes_cell(
     end_column = column_letter(len(COLUMNS))
     has_notes = bool(clean_text(notes))
 
-    # 이전 버전에서 적용된 행 전체 강조를 먼저 제거합니다.
+    # 기록 행 전체에 교차 음영과 하단 테두리를 적용해 행 구분을 명확히 합니다.
     worksheet.format(
         f"A{row_number}:{end_column}{row_number}",
-        {
-            "backgroundColor": {
-                "red": 1.0,
-                "green": 1.0,
-                "blue": 1.0,
-            },
-            "textFormat": {
-                "bold": False,
-                "foregroundColor": {
-                    "red": 0.0,
-                    "green": 0.0,
-                    "blue": 0.0,
-                },
-            },
-        },
+        _data_row_format(row_number),
     )
 
-    # 특이사항이 있는 경우 '특이사항' 열의 해당 셀만 강조합니다.
+    # 특이사항이 있으면 해당 셀만 기존 주황색 강조를 유지합니다.
     worksheet.format(
         f"{notes_column}{row_number}",
-        {
-            "backgroundColor": (
-                {"red": 1.0, "green": 0.93, "blue": 0.80}
-                if has_notes
-                else {"red": 1.0, "green": 1.0, "blue": 1.0}
-            ),
-            "textFormat": {
-                "bold": has_notes,
-                "foregroundColor": (
-                    {"red": 0.55, "green": 0.20, "blue": 0.05}
-                    if has_notes
-                    else {"red": 0.0, "green": 0.0, "blue": 0.0}
-                ),
-            },
-        },
+        _special_notes_format(row_number, has_notes),
     )
 
 
@@ -1975,10 +2009,13 @@ def normalize_existing_special_notes_format(
     worksheet: gspread.Worksheet,
     values: list[list[str]],
 ) -> None:
-    if len(values) <= 1:
+    """기존 데이터까지 표 형태가 잘 보이도록 시트 서식을 정리합니다."""
+    if not values:
         return
 
-    session_key = f"notes_format_cell_only_{worksheet.id}_{len(COLUMNS)}"
+    session_key = (
+        f"sheet_visual_v318_{worksheet.id}_{len(values)}_{len(COLUMNS)}"
+    )
     if st.session_state.get(session_key):
         return
 
@@ -1989,21 +2026,23 @@ def normalize_existing_special_notes_format(
     notes_index = headers.index("특이사항")
     notes_column = column_letter(notes_index + 1)
     end_column = column_letter(len(COLUMNS))
+
     formats: list[dict[str, Any]] = [
         {
-            "range": f"A2:{end_column}{len(values)}",
+            "range": f"A1:{end_column}1",
             "format": {
-                "backgroundColor": {
-                    "red": 1.0,
-                    "green": 1.0,
-                    "blue": 1.0,
-                },
+                "backgroundColor": {"red": 0.09, "green": 0.17, "blue": 0.30},
                 "textFormat": {
-                    "bold": False,
-                    "foregroundColor": {
-                        "red": 0.0,
-                        "green": 0.0,
-                        "blue": 0.0,
+                    "bold": True,
+                    "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                },
+                "horizontalAlignment": "CENTER",
+                "verticalAlignment": "MIDDLE",
+                "wrapStrategy": "WRAP",
+                "borders": {
+                    "bottom": {
+                        "style": "SOLID_MEDIUM",
+                        "color": {"red": 0.09, "green": 0.17, "blue": 0.30},
                     },
                 },
             },
@@ -2011,38 +2050,30 @@ def normalize_existing_special_notes_format(
     ]
 
     for row_number, raw_row in enumerate(values[1:], start=2):
-        notes = (
-            raw_row[notes_index]
-            if notes_index < len(raw_row)
-            else ""
-        )
-        if not clean_text(notes):
-            continue
         formats.append(
             {
-                "range": f"{notes_column}{row_number}",
-                "format": {
-                    "backgroundColor": {
-                        "red": 1.0,
-                        "green": 0.93,
-                        "blue": 0.80,
-                    },
-                    "textFormat": {
-                        "bold": True,
-                        "foregroundColor": {
-                            "red": 0.55,
-                            "green": 0.20,
-                            "blue": 0.05,
-                        },
-                    },
-                },
+                "range": f"A{row_number}:{end_column}{row_number}",
+                "format": _data_row_format(row_number),
             }
         )
 
+        notes = raw_row[notes_index] if notes_index < len(raw_row) else ""
+        if clean_text(notes):
+            formats.append(
+                {
+                    "range": f"{notes_column}{row_number}",
+                    "format": _special_notes_format(row_number, True),
+                }
+            )
+
     worksheet.batch_format(formats)
 
-    st.session_state[session_key] = True
+    try:
+        worksheet.freeze(rows=1)
+    except Exception:  # noqa: BLE001
+        pass
 
+    st.session_state[session_key] = True
 
 def load_records() -> pd.DataFrame:
     worksheet = get_worksheet()
@@ -2515,21 +2546,47 @@ def render_form(
             work_start_input = st.text_input(
                 "근무 시작 *",
                 value=clean_text(editing_record.get("근무시작")),
-                placeholder="예: 09:00",
+                placeholder="예: 09:00 또는 930",
                 key=f"manual_work_start_{nonce}",
                 on_change=auto_lookup_future_weather,
                 args=(nonce,),
             )
+            start_now, start_before = st.columns(2)
+            with start_now:
+                st.button(
+                    "현재시간",
+                    key=f"work_start_now_{nonce}",
+                    use_container_width=True,
+                    on_click=set_manual_time,
+                    args=("work_start", nonce, 0),
+                )
+            with start_before:
+                st.button(
+                    "30분 전",
+                    key=f"work_start_before_{nonce}",
+                    use_container_width=True,
+                    on_click=set_manual_time,
+                    args=("work_start", nonce, -30),
+                )
 
         with work_right:
             work_end_input = st.text_input(
                 "근무 종료 *",
                 value=clean_text(editing_record.get("근무종료")),
-                placeholder="예: 18:00",
+                placeholder="예: 18:00 또는 18",
                 key=f"manual_work_end_{nonce}",
                 on_change=auto_lookup_future_weather,
                 args=(nonce,),
             )
+            st.button(
+                "현재시간",
+                key=f"work_end_now_{nonce}",
+                use_container_width=True,
+                on_click=set_manual_time,
+                args=("work_end", nonce, 0),
+            )
+
+        st.caption("직접입력은 09:30, 930, 18처럼 입력해도 됩니다.")
 
         heat_left, heat_right = st.columns(2)
 
@@ -2537,16 +2594,40 @@ def render_form(
             heat_start_input = st.text_input(
                 "폭염 시작",
                 value=clean_text(editing_record.get("폭염시작")),
-                placeholder="예: 13:00",
+                placeholder="예: 13:00 또는 1300",
                 key=f"manual_heat_start_{nonce}",
             )
+            heat_start_now, heat_start_before = st.columns(2)
+            with heat_start_now:
+                st.button(
+                    "현재시간",
+                    key=f"heat_start_now_{nonce}",
+                    use_container_width=True,
+                    on_click=set_manual_time,
+                    args=("heat_start", nonce, 0),
+                )
+            with heat_start_before:
+                st.button(
+                    "30분 전",
+                    key=f"heat_start_before_{nonce}",
+                    use_container_width=True,
+                    on_click=set_manual_time,
+                    args=("heat_start", nonce, -30),
+                )
 
         with heat_right:
             heat_end_input = st.text_input(
                 "폭염 종료",
                 value=clean_text(editing_record.get("폭염종료")),
-                placeholder="예: 17:00",
+                placeholder="예: 17:00 또는 17",
                 key=f"manual_heat_end_{nonce}",
+            )
+            st.button(
+                "현재시간",
+                key=f"heat_end_now_{nonce}",
+                use_container_width=True,
+                on_click=set_manual_time,
+                args=("heat_end", nonce, 0),
             )
 
         work_start = parse_time_value(work_start_input)
@@ -2649,12 +2730,10 @@ def render_form(
         measure_labels = {
             "1시간 이내 10분 이상 휴식": "1시간 이내 10분 이상 휴식",
             "2시간 이내 20분 이상 휴식": "2시간 이내 20분 이상 휴식",
-            "냉방기 가동 25도 이하": "냉방기 가동 25℃ 이하",
-            "제작팀 협의 조정": "제작팀 협의 조정",
         }
 
-        measure_row1_left, measure_row1_right = st.columns(2)
-        with measure_row1_left:
+        measure_left, measure_right = st.columns(2)
+        with measure_left:
             st.button(
                 measure_labels[MEASURE_OPTIONS[0]],
                 key=f"measure_0_{nonce}",
@@ -2668,7 +2747,7 @@ def render_form(
                 args=(MEASURE_OPTIONS[0], nonce),
             )
 
-        with measure_row1_right:
+        with measure_right:
             st.button(
                 measure_labels[MEASURE_OPTIONS[1]],
                 key=f"measure_1_{nonce}",
@@ -2680,35 +2759,6 @@ def render_form(
                 ),
                 on_click=toggle_measure,
                 args=(MEASURE_OPTIONS[1], nonce),
-            )
-
-        measure_row2_left, measure_row2_right = st.columns(2)
-        with measure_row2_left:
-            st.button(
-                measure_labels[MEASURE_OPTIONS[2]],
-                key=f"measure_2_{nonce}",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if MEASURE_OPTIONS[2] in selected_measure_list
-                    else "secondary"
-                ),
-                on_click=toggle_measure,
-                args=(MEASURE_OPTIONS[2], nonce),
-            )
-
-        with measure_row2_right:
-            st.button(
-                measure_labels[MEASURE_OPTIONS[3]],
-                key=f"measure_3_{nonce}",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if MEASURE_OPTIONS[3] in selected_measure_list
-                    else "secondary"
-                ),
-                on_click=toggle_measure,
-                args=(MEASURE_OPTIONS[3], nonce),
             )
 
         measures = list(
