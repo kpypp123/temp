@@ -20,7 +20,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.14 · 2026-08-10"
+APP_VERSION = "Professional UI v3.15 · 2026-08-11"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -35,7 +35,12 @@ KMA_ULTRA_NOWCAST_API_URL = (
     "https://apihub.kma.go.kr/api/typ02/openApi/"
     "VilageFcstInfoService_2.0/getUltraSrtNcst"
 )
+KMA_VILLAGE_FORECAST_API_URL = (
+    "https://apihub.kma.go.kr/api/typ02/openApi/"
+    "VilageFcstInfoService_2.0/getVilageFcst"
+)
 KAKAO_PLACE_API_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
+FORECAST_HEAT_THRESHOLD = 31.0
 
 COLUMNS = [
     "id",
@@ -111,6 +116,7 @@ st.markdown(
     .stApp {
         background: var(--bg);
         color: var(--ink);
+        color-scheme: light;
     }
 
     header[data-testid="stHeader"] {
@@ -254,101 +260,74 @@ st.markdown(
         color: #ffffff;
     }
 
-/* 입력창 / 날짜 / 시간 / 숫자 / 텍스트 영역 */
-div[data-baseweb="input"] > div,
-div[data-baseweb="select"] > div,
-div[data-baseweb="textarea"] > div,
-textarea {
-    border-radius: 7px !important;
-    border-color: var(--line-strong) !important;
-    background: #ffffff !important;
-    color: #111827 !important;
-}
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="textarea"] > div,
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stNumberInput"] input,
+    div[data-testid="stDateInput"] input,
+    div[data-testid="stTimeInput"] input,
+    div[data-testid="stTextArea"] textarea,
+    textarea {
+        border-radius: 7px !important;
+        border-color: var(--line-strong) !important;
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
 
-/* 모바일 다크모드 강제 방지 */
-.stApp {
-    background: var(--bg);
-    color: var(--ink);
-    color-scheme: light;
-}
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea,
+    div[data-baseweb="select"] *,
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stNumberInput"] input,
+    div[data-testid="stDateInput"] input,
+    div[data-testid="stTimeInput"] input,
+    div[data-testid="stTextArea"] textarea {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        caret-color: #111827 !important;
+    }
 
-/* 실제 입력되는 글자 */
-input,
-textarea {
-    color: #111827 !important;
-    -webkit-text-fill-color: #111827 !important;
-    caret-color: #111827 !important;
-}
+    input::placeholder,
+    textarea::placeholder {
+        color: #98a2b3 !important;
+        -webkit-text-fill-color: #98a2b3 !important;
+        opacity: 1 !important;
+    }
 
-/* 입력 전 안내문구 */
-input::placeholder,
-textarea::placeholder {
-    color: #98a2b3 !important;
-    -webkit-text-fill-color: #98a2b3 !important;
-    opacity: 1 !important;
-}
+    div[data-baseweb="popover"],
+    div[data-baseweb="popover"] > div,
+    ul[role="listbox"],
+    li[role="option"] {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
 
-/* 날짜 입력 */
-div[data-testid="stDateInput"] input {
-    color: #111827 !important;
-    -webkit-text-fill-color: #111827 !important;
-    background-color: #ffffff !important;
-}
+    li[role="option"] *,
+    div[data-baseweb="menu"] *,
+    div[data-baseweb="calendar"] * {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
 
-/* 시간 입력 */
-div[data-testid="stTimeInput"] input {
-    color: #111827 !important;
-    -webkit-text-fill-color: #111827 !important;
-    background-color: #ffffff !important;
-}
+    div[data-baseweb="calendar"],
+    div[data-baseweb="calendar"] > div,
+    div[data-baseweb="calendar"] button {
+        background-color: #ffffff !important;
+    }
 
-/* 숫자 입력 */
-div[data-testid="stNumberInput"] input {
-    color: #111827 !important;
-    -webkit-text-fill-color: #111827 !important;
-    background-color: #ffffff !important;
-}
+    div[data-baseweb="calendar"] button[aria-selected="true"] {
+        background-color: var(--navy) !important;
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+    }
 
-/* 일반 텍스트 입력 */
-div[data-testid="stTextInput"] input {
-    color: #111827 !important;
-    -webkit-text-fill-color: #111827 !important;
-    background-color: #ffffff !important;
-}
-
-/* 긴 텍스트 입력 */
-div[data-testid="stTextArea"] textarea {
-    color: #111827 !important;
-    -webkit-text-fill-color: #111827 !important;
-    background-color: #ffffff !important;
-}
-
-/* 선택박스 */
-div[data-baseweb="select"] > div {
-    background-color: #ffffff !important;
-    color: #111827 !important;
-}
-
-div[data-baseweb="select"] span {
-    color: #111827 !important;
-}
-
-/* 펼쳐지는 선택 목록 */
-div[role="listbox"],
-div[role="option"] {
-    background-color: #ffffff !important;
-    color: #111827 !important;
-}
-
-/* 날짜 달력 */
-div[data-baseweb="calendar"] {
-    background-color: #ffffff !important;
-    color: #111827 !important;
-}
-
-div[data-baseweb="calendar"] * {
-    color: #111827 !important;
-}
+    div[data-baseweb="calendar"] button[aria-selected="true"] * {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+    }
 
     label[data-testid="stWidgetLabel"] p {
         color: #344054;
@@ -991,6 +970,127 @@ def calculate_summer_apparent_temperature(
     return round(apparent, 1)
 
 
+def latest_village_forecast_base(now: datetime) -> datetime:
+    """현재 시각에 이미 발표된 최신 단기예보 기준시각을 구합니다."""
+    base_hours = (2, 5, 8, 11, 14, 17, 20, 23)
+    # 단기예보는 기준시각 약 10분 뒤 제공되므로 15분의 여유를 둡니다.
+    available_before = now - timedelta(minutes=15)
+    candidates = [
+        available_before.replace(hour=hour, minute=0, second=0, microsecond=0)
+        for hour in base_hours
+        if hour <= available_before.hour
+    ]
+    if candidates:
+        return candidates[-1]
+    previous_day = available_before - timedelta(days=1)
+    return previous_day.replace(hour=23, minute=0, second=0, microsecond=0)
+
+
+def fetch_kma_forecast_apparent_temperature_range(
+    latitude: float,
+    longitude: float,
+    auth_key: str,
+    range_start: datetime,
+    range_end: datetime,
+) -> tuple[str, str, str | None, str | None, int]:
+    """단기예보로 근무시간의 예상 체감온도와 예상 폭염시간을 구합니다."""
+    grid_x, grid_y = latitude_longitude_to_grid(latitude, longitude)
+    base_time = latest_village_forecast_base(datetime.now(KST))
+    params = urllib.parse.urlencode(
+        {
+            "pageNo": "1",
+            "numOfRows": "2000",
+            "dataType": "JSON",
+            "base_date": base_time.strftime("%Y%m%d"),
+            "base_time": base_time.strftime("%H%M"),
+            "nx": str(grid_x),
+            "ny": str(grid_y),
+            "authKey": auth_key,
+        }
+    )
+    request = urllib.request.Request(
+        f"{KMA_VILLAGE_FORECAST_API_URL}?{params}",
+        headers={"User-Agent": "checktemp-streamlit/1.0"},
+    )
+
+    with urllib.request.urlopen(request, timeout=20) as response:
+        result = json.loads(response.read().decode("utf-8"))
+
+    response_body = result.get("response") or {}
+    header = response_body.get("header") or {}
+    if clean_text(header.get("resultCode")) != "00":
+        raise ValueError(
+            clean_text(header.get("resultMsg")) or "단기예보 응답 오류"
+        )
+
+    raw_items = (
+        response_body.get("body", {}).get("items", {}).get("item", [])
+    )
+    hourly_values: dict[datetime, dict[str, float]] = {}
+    for item in raw_items:
+        category = clean_text(item.get("category"))
+        if category not in {"TMP", "REH"}:
+            continue
+        forecast_date = clean_text(item.get("fcstDate"))
+        forecast_time = clean_text(item.get("fcstTime")).zfill(4)
+        try:
+            forecast_at = datetime.strptime(
+                f"{forecast_date}{forecast_time}", "%Y%m%d%H%M"
+            ).replace(tzinfo=KST)
+        except ValueError:
+            continue
+        if not (range_start <= forecast_at <= range_end):
+            continue
+        value = parse_float(item.get("fcstValue"))
+        if value is not None:
+            hourly_values.setdefault(forecast_at, {})[category] = value
+
+    forecasts: list[tuple[datetime, float]] = []
+    for forecast_at, values in sorted(hourly_values.items()):
+        air_temperature = values.get("TMP")
+        relative_humidity = values.get("REH")
+        if air_temperature is None or relative_humidity is None:
+            continue
+        if not (-50 <= air_temperature <= 60 and 0 <= relative_humidity <= 100):
+            continue
+        forecasts.append(
+            (
+                forecast_at,
+                calculate_summer_apparent_temperature(
+                    air_temperature,
+                    relative_humidity,
+                ),
+            )
+        )
+
+    if not forecasts:
+        raise ValueError(
+            "선택한 날짜·근무시간은 현재 제공되는 단기예보 범위에 없습니다."
+        )
+
+    temperatures = [temperature for _, temperature in forecasts]
+    heat_forecasts = [
+        forecast_at
+        for forecast_at, temperature in forecasts
+        if temperature >= FORECAST_HEAT_THRESHOLD
+    ]
+    expected_start: str | None = None
+    expected_end: str | None = None
+    if heat_forecasts:
+        heat_start = heat_forecasts[0]
+        heat_end = min(heat_forecasts[-1] + timedelta(hours=1), range_end)
+        expected_start = heat_start.strftime("%H:%M")
+        expected_end = heat_end.strftime("%H:%M")
+
+    return (
+        format_number(min(temperatures)),
+        format_number(max(temperatures)),
+        expected_start,
+        expected_end,
+        len(forecasts),
+    )
+
+
 def fetch_kma_regional_apparent_temperature(
     latitude: float,
     longitude: float,
@@ -1127,6 +1227,82 @@ def record_heat_start_with_weather(
         st.session_state.get(f"manual_work_end_{nonce}")
     )
 
+    selected_date = st.session_state.get(f"date_{nonce}")
+    if not isinstance(selected_date, date):
+        selected_date = datetime.now(KST).date()
+
+    if selected_date > datetime.now(KST).date():
+        work_start_value = parse_time_value(work_start_text)
+        work_end_value = parse_time_value(work_end_text)
+        if work_start_value is None or work_end_value is None:
+            st.session_state[notice_key] = (
+                "warning",
+                "미래 날짜의 예상 폭염시간을 조회하려면 근무 시작과 종료를 "
+                "HH:MM 형식으로 모두 입력해 주세요.",
+            )
+            return
+
+        forecast_start = datetime.combine(
+            selected_date,
+            work_start_value,
+            tzinfo=KST,
+        )
+        forecast_end = datetime.combine(
+            selected_date,
+            work_end_value,
+            tzinfo=KST,
+        )
+        if forecast_end < forecast_start:
+            forecast_end += timedelta(days=1)
+
+        try:
+            (
+                minimum,
+                maximum,
+                expected_start,
+                expected_end,
+                forecast_count,
+            ) = fetch_kma_forecast_apparent_temperature_range(
+                coordinates[0],
+                coordinates[1],
+                auth_key,
+                forecast_start,
+                forecast_end,
+            )
+        except Exception as error:  # noqa: BLE001
+            st.session_state[notice_key] = (
+                "warning",
+                "선택한 미래 날짜의 예상 체감온도 조회에 실패했습니다. "
+                f"날짜가 단기예보 범위인지 확인해 주세요. ({error})",
+            )
+            return
+
+        temperature_range = (
+            minimum if minimum == maximum else f"{minimum}~{maximum}"
+        )
+        st.session_state[f"temperature_{nonce}"] = temperature_range
+        st.session_state[f"manual_heat_start_{nonce}"] = expected_start or ""
+        st.session_state[f"manual_heat_end_{nonce}"] = expected_end or ""
+
+        if expected_start and expected_end:
+            heat_message = (
+                f"체감온도 {format_number(FORECAST_HEAT_THRESHOLD)}℃ 이상 예상시간 "
+                f"{expected_start}~{expected_end}를 예상 폭염시간으로 입력했습니다."
+            )
+        else:
+            heat_message = (
+                f"근무시간 중 체감온도 {format_number(FORECAST_HEAT_THRESHOLD)}℃ "
+                "이상으로 예상되는 시간이 없어 폭염시간을 비워 두었습니다."
+            )
+        st.session_state[notice_key] = (
+            "success",
+            f"{matched_name} · {selected_date.strftime('%Y-%m-%d')} 단기예보 "
+            f"체감온도 최저 {minimum}℃ · 최고 {maximum}℃를 "
+            f"{forecast_count}개 시간자료로 확인했습니다. {heat_message} "
+            "예보는 변경될 수 있으므로 당일 또는 작업 후 다시 조회해 주세요.",
+        )
+        return
+
     range_label = ""
     range_start_text = ""
     range_end_text = ""
@@ -1162,9 +1338,6 @@ def record_heat_start_with_weather(
             )
             return
 
-        selected_date = st.session_state.get(f"date_{nonce}")
-        if not isinstance(selected_date, date):
-            selected_date = datetime.now(KST).date()
         range_start = datetime.combine(
             selected_date,
             range_start_value,
@@ -2005,10 +2178,10 @@ def render_form(
         )
 
         st.caption(
-            "폭염 시작·종료를 입력하면 폭염시간을 우선 조회합니다. "
-            "폭염시간이 비어 있으면 근무 시작·종료를 대신 사용해 기상청 "
-            "500m 격자 체감온도의 최저~최고값을 입력합니다. 시간대가 모두 "
-            "비어 있을 때만 현재 500m 격자값과 지역 실황값을 비교합니다."
+            "미래 날짜는 근무시간의 단기예보를 이용해 예상 체감온도와 "
+            "31℃ 이상 예상 폭염시간을 자동 입력합니다. 오늘 또는 지난 "
+            "날짜는 기존처럼 폭염시간을 우선 조회하고, 비어 있으면 "
+            "근무시간의 기상청 500m 격자값을 조회합니다."
         )
 
         st.divider()
