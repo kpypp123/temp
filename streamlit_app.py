@@ -25,7 +25,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.25 · 2026-08-11"
+APP_VERSION = "Professional UI v3.27 · 2026-08-11"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -2707,7 +2707,11 @@ def normalize_existing_special_notes_format(
     worksheet: gspread.Worksheet,
     values: list[list[str]],
 ) -> None:
-    """기존 데이터까지 표 형태가 잘 보이도록 시트 서식을 정리합니다."""
+    """기존 데이터 전체 서식 함수.
+
+    앱 시작 시 호출하지 않습니다. 전체 행 서식은 느릴 수 있으므로
+    신규/수정 행은 format_special_notes_cell()로 개별 적용합니다.
+    """
     if not values:
         return
 
@@ -2774,15 +2778,49 @@ def normalize_existing_special_notes_format(
 
     st.session_state[session_key] = True
 
+@st.cache_data(ttl=20, show_spinner=False)
 def load_records() -> pd.DataFrame:
+    """records 시트를 1회만 읽어 앱 로딩을 가볍게 유지합니다.
+
+    기존 전체 행 서식 재적용은 앱 시작 경로에서 제거했습니다.
+    새 기록/수정 행은 저장 시 해당 행만 서식 적용합니다.
+    """
     worksheet = get_worksheet()
-    ensure_headers(worksheet)
     values = worksheet.get_all_values()
 
-    normalize_existing_special_notes_format(
-        worksheet,
-        values,
-    )
+    if not values:
+        worksheet.update(
+            range_name=f"A1:{column_letter(len(COLUMNS))}1",
+            values=[COLUMNS],
+        )
+        return empty_dataframe()
+
+    headers = [clean_text(value) for value in values[0]]
+
+    if headers[: len(COLUMNS)] == COLUMNS:
+        pass
+    elif (
+        headers[: len(PRE_COMMON_COLUMNS)] == PRE_COMMON_COLUMNS
+        or headers[: len(LEGACY_COLUMNS)] == LEGACY_COLUMNS
+    ):
+        migrate_sheet_to_current(worksheet, values)
+        # 마이그레이션은 예외적인 1회 작업이므로 이후에만 다시 읽습니다.
+        values = worksheet.get_all_values()
+    else:
+        missing = [
+            column
+            for column in COLUMNS
+            if column not in headers
+        ]
+        missing_text = (
+            ", ".join(missing)
+            if missing
+            else "열 순서 불일치"
+        )
+        raise ValueError(
+            "records 시트의 첫 행 제목이 앱 형식과 다릅니다. "
+            f"확인할 항목: {missing_text}"
+        )
 
     if len(values) <= 1:
         return empty_dataframe()
@@ -2835,6 +2873,8 @@ def append_record(record: dict[str, Any]) -> None:
         # 기록 저장은 성공했으므로 서식 오류 때문에 중복 저장되지 않게 합니다.
         pass
 
+    load_records.clear()
+
 
 def update_record(
     record_id: str,
@@ -2867,6 +2907,8 @@ def update_record(
     except Exception:  # noqa: BLE001
         pass
 
+    load_records.clear()
+
 
 def delete_record(record_id: str) -> None:
     worksheet = get_worksheet()
@@ -2880,6 +2922,7 @@ def delete_record(record_id: str) -> None:
         )
 
     worksheet.delete_rows(cell.row)
+    load_records.clear()
 
 
 def heat_level(value: Any) -> str:
@@ -3833,6 +3876,7 @@ def render_records(
             use_container_width=True,
             key="refresh_records",
         ):
+            load_records.clear()
             st.rerun()
 
     with download_col:
