@@ -1506,6 +1506,39 @@ def record_heat_start_with_weather(
     )
 
 
+def auto_lookup_future_weather(nonce: int) -> None:
+    selected_date = st.session_state.get(f"date_{nonce}")
+    site_name = clean_text(st.session_state.get(f"site_{nonce}"))
+    work_start = clean_text(
+        st.session_state.get(f"manual_work_start_{nonce}")
+    )
+    work_end = clean_text(
+        st.session_state.get(f"manual_work_end_{nonce}")
+    )
+
+    if (
+        not isinstance(selected_date, date)
+        or selected_date <= datetime.now(KST).date()
+        or not site_name
+        or parse_time_value(work_start) is None
+        or parse_time_value(work_end) is None
+    ):
+        return
+
+    request_signature = (
+        selected_date.isoformat(),
+        site_name,
+        work_start,
+        work_end,
+    )
+    signature_key = f"auto_forecast_signature_{nonce}"
+    if st.session_state.get(signature_key) == request_signature:
+        return
+
+    st.session_state[signature_key] = request_signature
+    record_heat_start_with_weather(nonce, False)
+
+
 def clear_time(field: str, nonce: int) -> None:
     st.session_state[time_state_key(field, nonce)] = None
 
@@ -2164,6 +2197,8 @@ def render_form(
             "작업 날짜 *",
             value=default_date,
             key=f"date_{nonce}",
+            on_change=auto_lookup_future_weather,
+            args=(nonce,),
         )
 
         sport = st.selectbox(
@@ -2183,6 +2218,8 @@ def render_form(
             ),
             placeholder="예: ○○골프장, ○○야구장",
             key=f"site_{nonce}",
+            on_change=auto_lookup_future_weather,
+            args=(nonce,),
         )
 
         st.markdown(
@@ -2257,6 +2294,8 @@ def render_form(
                 value=clean_text(editing_record.get("근무시작")),
                 placeholder="예: 09:00",
                 key=f"manual_work_start_{nonce}",
+                on_change=auto_lookup_future_weather,
+                args=(nonce,),
             )
 
         with work_right:
@@ -2265,6 +2304,8 @@ def render_form(
                 value=clean_text(editing_record.get("근무종료")),
                 placeholder="예: 18:00",
                 key=f"manual_work_end_{nonce}",
+                on_change=auto_lookup_future_weather,
+                args=(nonce,),
             )
 
         heat_left, heat_right = st.columns(2)
@@ -2322,6 +2363,15 @@ def render_form(
             "현장에서 확인한 체감온도를 "
             "직접 입력합니다.",
         )
+
+        is_forecast_entry = work_date > datetime.now(KST).date()
+        if is_forecast_entry:
+            st.info(
+                "미래 날짜 사전입력입니다. 현장명과 근무시간을 모두 "
+                "입력하면 단기예보 체감온도와 예상 폭염시간이 자동 "
+                "적용됩니다. 작업 후 기록 조회의 수정 버튼으로 실제값을 "
+                "반영할 수 있습니다."
+            )
 
         temperature = st.text_input(
             "체감온도 (℃)",
@@ -2572,7 +2622,9 @@ def render_form(
         else:
             append_record(record)
             st.session_state.flash = (
-                "기록을 저장했습니다."
+                "사전 예보 기록을 저장했습니다. 작업 후 실제값으로 수정해 주세요."
+                if work_date > datetime.now(KST).date()
+                else "기록을 저장했습니다."
             )
     except Exception as exc:  # noqa: BLE001
         st.error(f"저장에 실패했습니다: {exc}")
