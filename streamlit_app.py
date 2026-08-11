@@ -25,7 +25,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.27 · 2026-08-11"
+APP_VERSION = "Professional UI v3.28 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -2588,16 +2588,17 @@ def migrate_sheet_to_current(
 
 
 def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
-    values = worksheet.get_all_values()
+    headers = [
+        clean_text(value)
+        for value in worksheet.row_values(1)
+    ]
 
-    if not values:
+    if not headers:
         worksheet.update(
             range_name=f"A1:{column_letter(len(COLUMNS))}1",
             values=[COLUMNS],
         )
         return COLUMNS
-
-    headers = [clean_text(value) for value in values[0]]
 
     if headers[: len(COLUMNS)] == COLUMNS:
         return headers
@@ -2606,6 +2607,7 @@ def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
         headers[: len(PRE_COMMON_COLUMNS)] == PRE_COMMON_COLUMNS
         or headers[: len(LEGACY_COLUMNS)] == LEGACY_COLUMNS
     ):
+        values = worksheet.get_all_values()
         migrate_sheet_to_current(worksheet, values)
         return COLUMNS
 
@@ -2858,17 +2860,31 @@ def record_values(record: dict[str, Any]) -> list[str]:
 def append_record(record: dict[str, Any]) -> None:
     worksheet = get_worksheet()
     ensure_headers(worksheet)
-    worksheet.append_row(
+    append_result = worksheet.append_row(
         record_values(record),
         value_input_option="USER_ENTERED",
         insert_data_option="INSERT_ROWS",
     )
-    try:
-        format_special_notes_cell(
-            worksheet,
-            len(worksheet.get_all_values()),
-            record.get("특이사항"),
+    updated_range = clean_text(
+        (append_result.get("updates") or {}).get("updatedRange")
+        if isinstance(append_result, dict)
+        else ""
+    )
+    row_match = re.search(r"(\d+)(?::[A-Z]+\d+)?$", updated_range)
+    row_number = int(row_match.group(1)) if row_match else 0
+    if row_number <= 0:
+        appended_cell = worksheet.find(
+            clean_text(record.get("id")),
+            in_column=1,
         )
+        row_number = appended_cell.row if appended_cell else 0
+    try:
+        if row_number > 0:
+            format_special_notes_cell(
+                worksheet,
+                row_number,
+                record.get("특이사항"),
+            )
     except Exception:  # noqa: BLE001
         # 기록 저장은 성공했으므로 서식 오류 때문에 중복 저장되지 않게 합니다.
         pass
@@ -4132,11 +4148,19 @@ show_flash()
 records_df = empty_dataframe()
 connection_error: Exception | None = None
 
-try:
-    records_df = load_records()
-except Exception as exc:  # noqa: BLE001
-    connection_error = exc
-    render_setup_error(exc)
+# 새 기록 첫 화면은 Google Sheets 응답을 기다리지 않고 즉시 표시합니다.
+# 기록 목록이 필요하거나 기존 기록을 수정할 때만 캐시된 1회 읽기를 실행합니다.
+needs_records = (
+    st.session_state.page == "records"
+    or bool(clean_text(st.session_state.editing_id))
+)
+
+if needs_records:
+    try:
+        records_df = load_records()
+    except Exception as exc:  # noqa: BLE001
+        connection_error = exc
+        render_setup_error(exc)
 
 if st.session_state.page == "form":
     render_form(
