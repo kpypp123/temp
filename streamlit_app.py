@@ -20,7 +20,7 @@ import streamlit as st
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.16 · 2026-08-11"
+APP_VERSION = "Professional UI v3.17 · 2026-08-11"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -43,6 +43,27 @@ KAKAO_PLACE_API_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 FORECAST_HEAT_THRESHOLD = 31.0
 
 COLUMNS = [
+    "id",
+    "작업날짜",
+    "종목",
+    "현장명",
+    "팀",
+    "근무시작",
+    "근무종료",
+    "작성자",
+    "폭염시작",
+    "폭염종료",
+    "체감온도",
+    "휴게시간",
+    "공통 조치사항",
+    "조치사항",
+    "특이사항",
+    "등록시간",
+    "수정시간",
+]
+
+# v3.16 시트 구조: 공통 조치사항이 조치사항에 합쳐져 있던 상태
+PRE_COMMON_COLUMNS = [
     "id",
     "작업날짜",
     "종목",
@@ -84,12 +105,51 @@ LEGACY_COLUMNS = [
 
 TEAM_OPTIONS = ["중계팀", "영상팀"]
 
-SPORT_OPTIONS = ["야구", "골프", "기타"]
+SPORT_OPTIONS = ["야구", "골프", "기타스포츠"]
 
 SPORT_COMMON_MEASURES = {
-    "야구": "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | 폭염시간대 업무강도 조정",
-    "골프": "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | 코스 이동 동선 및 업무강도 조정",
-    "기타": "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | 폭염시간대 업무강도 조정",
+    "골프": (
+        "- 중계차, 중계룸, 카메라룸, W/L룸, 몽골 텐트 냉방 가동\n"
+        "  (체감온도 30℃ 이하 유지)\n"
+        "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 얼음물,\n"
+        "  아이스박스 지급\n"
+        "- 폭염 시간대 불필요한 외부 활동 최소화"
+    ),
+    "야구": (
+        "- 중계차·장비차·중계석·중계스태프실 냉방 가동\n"
+        "  · 냉방 공간 체감온도 30℃ 이하 유지\n"
+        "- 생수·냉음료·식염포도당·폭염질환 응급키트 비치 및 위치 공유\n"
+        "- 폭염시간대 불필요한 야외활동 최소화\n"
+        "- 이상 증상 발생 시 10~15분간 냉방 공간에서 휴식하도록\n"
+        "  제작팀과 사전 협의"
+    ),
+    "기타스포츠": (
+        "- 중계차, 휴게실, 체육관 냉방 가동\n"
+        "  (체감온도 30℃ 이하 유지)\n"
+        "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 음료 지급\n"
+        "- 폭염 시간대 불필요한 외부 활동 최소화\n"
+        "- 중계차, 체육관 냉방 가동 공간에서 근무,\n"
+        "  폭염 작업 해당 없음\n"
+        "- 케이블 설치 등 외부 작업 완료\n"
+        "  1시간 이내 10분 이상 휴게시간 부여"
+    ),
+}
+
+# v3.16에서 조치사항에 함께 저장했던 기존 공통 문구.
+# 마이그레이션 시 이 항목만 제거하고 실제 추가 조치는 보존합니다.
+LEGACY_COMMON_MEASURES = {
+    "야구": (
+        "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
+        "폭염시간대 업무강도 조정"
+    ),
+    "골프": (
+        "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
+        "코스 이동 동선 및 업무강도 조정"
+    ),
+    "기타스포츠": (
+        "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
+        "폭염시간대 업무강도 조정"
+    ),
 }
 
 MEASURE_OPTIONS = [
@@ -1726,10 +1786,51 @@ def infer_sport(site_name: Any) -> str:
         return "야구"
     if any(keyword in site for keyword in ("골프", "CC", "cc", "컨트리클럽")):
         return "골프"
-    return "기타"
+    return "기타스포츠"
 
 
-def migrate_legacy_sheet(
+def normalize_sport(value: Any, site_name: Any = "") -> str:
+    sport = clean_text(value)
+    if sport == "기타":
+        return "기타스포츠"
+    if sport in SPORT_OPTIONS:
+        return sport
+    return infer_sport(site_name)
+
+
+def common_measures_for_sport(sport: Any) -> str:
+    normalized = normalize_sport(sport)
+    return SPORT_COMMON_MEASURES.get(
+        normalized,
+        SPORT_COMMON_MEASURES["기타스포츠"],
+    )
+
+
+def strip_legacy_common_measures(sport: Any, value: Any) -> str:
+    """기존 조치사항에서 v3.16 공통조치 문구만 제거합니다."""
+    text = clean_text(value)
+    if not text:
+        return ""
+
+    normalized_sport = normalize_sport(sport)
+    legacy = LEGACY_COMMON_MEASURES.get(normalized_sport, "")
+    legacy_parts = {
+        part.strip()
+        for part in legacy.split("|")
+        if part.strip()
+    }
+    parts = [
+        part.strip()
+        for part in text.split("|")
+        if part.strip()
+    ]
+    return " | ".join(
+        part for part in parts
+        if part not in legacy_parts
+    )
+
+
+def migrate_sheet_to_current(
     worksheet: gspread.Worksheet,
     values: list[list[str]],
 ) -> None:
@@ -1741,8 +1842,12 @@ def migrate_legacy_sheet(
 
     old_headers = [clean_text(value) for value in values[0]]
     migrated_rows: list[list[str]] = [COLUMNS]
+
     for raw_row in values[1:]:
-        padded = raw_row + [""] * (len(old_headers) - len(raw_row))
+        padded = raw_row + [""] * max(
+            0,
+            len(old_headers) - len(raw_row),
+        )
         old_record = {
             header: clean_text(padded[index])
             for index, header in enumerate(old_headers)
@@ -1750,13 +1855,23 @@ def migrate_legacy_sheet(
         }
         if not any(old_record.values()):
             continue
+
+        sport = normalize_sport(
+            old_record.get("종목"),
+            old_record.get("현장명"),
+        )
         new_record = {
             column: old_record.get(column, "")
             for column in COLUMNS
         }
-        new_record["종목"] = (
-            old_record.get("종목")
-            or infer_sport(old_record.get("현장명"))
+        new_record["종목"] = sport
+        new_record["공통 조치사항"] = (
+            old_record.get("공통 조치사항")
+            or common_measures_for_sport(sport)
+        )
+        new_record["조치사항"] = strip_legacy_common_measures(
+            sport,
+            old_record.get("조치사항"),
         )
         migrated_rows.append(record_values(new_record))
 
@@ -1780,27 +1895,30 @@ def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
 
     headers = [clean_text(value) for value in values[0]]
 
-    if headers[: len(LEGACY_COLUMNS)] == LEGACY_COLUMNS:
-        migrate_legacy_sheet(worksheet, values)
+    if headers[: len(COLUMNS)] == COLUMNS:
+        return headers
+
+    if (
+        headers[: len(PRE_COMMON_COLUMNS)] == PRE_COMMON_COLUMNS
+        or headers[: len(LEGACY_COLUMNS)] == LEGACY_COLUMNS
+    ):
+        migrate_sheet_to_current(worksheet, values)
         return COLUMNS
 
-    if headers[: len(COLUMNS)] != COLUMNS:
-        missing = [
-            column
-            for column in COLUMNS
-            if column not in headers
-        ]
-        missing_text = (
-            ", ".join(missing)
-            if missing
-            else "열 순서 불일치"
-        )
-        raise ValueError(
-            "records 시트의 첫 행 제목이 앱 형식과 다릅니다. "
-            f"확인할 항목: {missing_text}"
-        )
-
-    return headers
+    missing = [
+        column
+        for column in COLUMNS
+        if column not in headers
+    ]
+    missing_text = (
+        ", ".join(missing)
+        if missing
+        else "열 순서 불일치"
+    )
+    raise ValueError(
+        "records 시트의 첫 행 제목이 앱 형식과 다릅니다. "
+        f"확인할 항목: {missing_text}"
+    )
 
 
 def format_special_notes_cell(
@@ -1832,7 +1950,7 @@ def format_special_notes_cell(
         },
     )
 
-    # 특이사항이 있는 경우 N열의 해당 셀만 강조합니다.
+    # 특이사항이 있는 경우 '특이사항' 열의 해당 셀만 강조합니다.
     worksheet.format(
         f"{notes_column}{row_number}",
         {
@@ -1860,7 +1978,7 @@ def normalize_existing_special_notes_format(
     if len(values) <= 1:
         return
 
-    session_key = f"notes_format_n_only_{worksheet.id}"
+    session_key = f"notes_format_cell_only_{worksheet.id}_{len(COLUMNS)}"
     if st.session_state.get(session_key):
         return
 
@@ -2067,7 +2185,11 @@ def option_index(
     value: Any,
     fallback: int = 0,
 ) -> int:
-    text = clean_text(value)
+    text = (
+        normalize_sport(value)
+        if options == SPORT_OPTIONS
+        else clean_text(value)
+    )
 
     try:
         return options.index(text)
@@ -2500,17 +2622,20 @@ def render_form(
             "시행한 조치와 특이사항을 남깁니다.",
         )
 
+        common_measures = common_measures_for_sport(sport)
+
         st.markdown(
-            '<div class="field-label">시행한 조치</div>',
+            '<div class="field-label">공통 조치사항</div>',
             unsafe_allow_html=True,
         )
-        common_measures = SPORT_COMMON_MEASURES.get(
-            sport,
-            SPORT_COMMON_MEASURES["기타"],
-        )
         st.info(
-            f"{sport} 기본 공통조치가 자동으로 저장됩니다: "
+            f"**{sport} 공통 조치사항**\n\n"
             f"{common_measures}"
+        )
+
+        st.markdown(
+            '<div class="field-label">추가 시행 조치</div>',
+            unsafe_allow_html=True,
         )
         st.caption("복수 선택 가능합니다. 다시 누르면 선택이 해제됩니다.")
 
@@ -2701,14 +2826,8 @@ def render_form(
         "폭염종료": heat_end_text,
         "체감온도": normalized_temperature,
         "휴게시간": str(rest_minutes),
-        "조치사항": " | ".join(
-            [
-                part.strip()
-                for part in common_measures.split("|")
-                if part.strip()
-            ]
-            + measures
-        ),
+        "공통 조치사항": common_measures,
+        "조치사항": " | ".join(measures),
         "특이사항": notes.strip(),
         "등록시간": created_at,
         "수정시간": now_text,
@@ -3021,6 +3140,13 @@ def render_records(
                 """,
                 unsafe_allow_html=True,
             )
+
+            common_text = clean_text(
+                record.get("공통 조치사항")
+            )
+            if common_text:
+                st.markdown("**공통 조치사항**")
+                st.markdown(common_text)
 
             st.write(
                 "**조치사항**  "
