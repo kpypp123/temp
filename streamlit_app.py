@@ -1770,15 +1770,15 @@ def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
     return headers
 
 
-def format_special_notes_row(
+def format_special_notes_cell(
     worksheet: gspread.Worksheet,
     row_number: int,
     notes: Any,
 ) -> None:
-    end_column = column_letter(len(COLUMNS))
+    notes_column = column_letter(COLUMNS.index("특이사항") + 1)
     has_notes = bool(clean_text(notes))
     worksheet.format(
-        f"A{row_number}:{end_column}{row_number}",
+        f"{notes_column}{row_number}",
         {
             "backgroundColor": (
                 {"red": 1.0, "green": 0.93, "blue": 0.80}
@@ -1844,13 +1844,13 @@ def append_record(record: dict[str, Any]) -> None:
         insert_data_option="INSERT_ROWS",
     )
     try:
-        format_special_notes_row(
+        format_special_notes_cell(
             worksheet,
             len(worksheet.get_all_values()),
             record.get("특이사항"),
         )
     except Exception:  # noqa: BLE001
-        # 행 저장은 성공했으므로 서식 오류 때문에 중복 저장되지 않게 합니다.
+        # 기록 저장은 성공했으므로 서식 오류 때문에 중복 저장되지 않게 합니다.
         pass
 
 
@@ -1877,7 +1877,7 @@ def update_record(
         value_input_option="USER_ENTERED",
     )
     try:
-        format_special_notes_row(
+        format_special_notes_cell(
             worksheet,
             cell.row,
             record.get("특이사항"),
