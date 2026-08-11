@@ -1809,7 +1809,30 @@ def format_special_notes_cell(
     notes: Any,
 ) -> None:
     notes_column = column_letter(COLUMNS.index("특이사항") + 1)
+    end_column = column_letter(len(COLUMNS))
     has_notes = bool(clean_text(notes))
+
+    # 이전 버전에서 적용된 행 전체 강조를 먼저 제거합니다.
+    worksheet.format(
+        f"A{row_number}:{end_column}{row_number}",
+        {
+            "backgroundColor": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+            },
+            "textFormat": {
+                "bold": False,
+                "foregroundColor": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                },
+            },
+        },
+    )
+
+    # 특이사항이 있는 경우 N열의 해당 셀만 강조합니다.
     worksheet.format(
         f"{notes_column}{row_number}",
         {
@@ -1830,10 +1853,88 @@ def format_special_notes_cell(
     )
 
 
+def normalize_existing_special_notes_format(
+    worksheet: gspread.Worksheet,
+    values: list[list[str]],
+) -> None:
+    if len(values) <= 1:
+        return
+
+    session_key = f"notes_format_n_only_{worksheet.id}"
+    if st.session_state.get(session_key):
+        return
+
+    headers = [clean_text(value) for value in values[0]]
+    if "특이사항" not in headers:
+        return
+
+    notes_index = headers.index("특이사항")
+    notes_column = column_letter(notes_index + 1)
+    end_column = column_letter(len(COLUMNS))
+    formats: list[dict[str, Any]] = [
+        {
+            "range": f"A2:{end_column}{len(values)}",
+            "format": {
+                "backgroundColor": {
+                    "red": 1.0,
+                    "green": 1.0,
+                    "blue": 1.0,
+                },
+                "textFormat": {
+                    "bold": False,
+                    "foregroundColor": {
+                        "red": 0.0,
+                        "green": 0.0,
+                        "blue": 0.0,
+                    },
+                },
+            },
+        }
+    ]
+
+    for row_number, raw_row in enumerate(values[1:], start=2):
+        notes = (
+            raw_row[notes_index]
+            if notes_index < len(raw_row)
+            else ""
+        )
+        if not clean_text(notes):
+            continue
+        formats.append(
+            {
+                "range": f"{notes_column}{row_number}",
+                "format": {
+                    "backgroundColor": {
+                        "red": 1.0,
+                        "green": 0.93,
+                        "blue": 0.80,
+                    },
+                    "textFormat": {
+                        "bold": True,
+                        "foregroundColor": {
+                            "red": 0.55,
+                            "green": 0.20,
+                            "blue": 0.05,
+                        },
+                    },
+                },
+            }
+        )
+
+    worksheet.batch_format(formats)
+
+    st.session_state[session_key] = True
+
+
 def load_records() -> pd.DataFrame:
     worksheet = get_worksheet()
     ensure_headers(worksheet)
     values = worksheet.get_all_values()
+
+    normalize_existing_special_notes_format(
+        worksheet,
+        values,
+    )
 
     if len(values) <= 1:
         return empty_dataframe()
