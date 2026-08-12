@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.34 · 2026-08-12"
+APP_VERSION = "Professional UI v3.35 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3269,6 +3269,34 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                             quote=False,
                         ),
                     )
+
+                    # 예전 원본에서 휴게 조치 결과 칸에 남아 있던
+                    # 필드카메라/W/L 카메라 안내문은 문장 분할·공백과 관계없이 제거합니다.
+                    report_result_marker = "4. 휴게 조치 결과"
+                    marker_index = section_xml.find(report_result_marker)
+                    if marker_index >= 0:
+                        report_head = section_xml[:marker_index]
+                        report_result = section_xml[marker_index:]
+                        legacy_camera_patterns = (
+                            r"\s*[·ㆍ-]?\s*필드카메라\s*[:：]?\s*"
+                            r"중요 선수 외 이글[·ㆍ]?버디(?: 워킹)? 촬영 후 휴식\s*",
+                            r"\s*[·ㆍ-]?\s*W\s*/\s*L\s*카메라\s*[:：]?\s*"
+                            r"혹서기 지원인력을 활용한 교대\s*근무 실시\s*",
+                        )
+
+                        def remove_legacy_camera_text(match: re.Match[str]) -> str:
+                            value = html.unescape(match.group(1))
+                            for pattern in legacy_camera_patterns:
+                                value = re.sub(pattern, "", value)
+                            return f"<hp:t>{html.escape(value, quote=False)}</hp:t>"
+
+                        report_result = re.sub(
+                            r"<hp:t>(.*?)</hp:t>",
+                            remove_legacy_camera_text,
+                            report_result,
+                            flags=re.DOTALL,
+                        )
+                        section_xml = report_head + report_result
 
                     # 공통 예방조치의 마지막 항목으로 10분 휴식 기준을 고정 표시합니다.
                     schedule_heading = (
