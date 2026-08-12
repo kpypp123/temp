@@ -34,7 +34,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.53 · 2026-08-12"
+APP_VERSION = "Professional UI v3.54 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3472,7 +3472,14 @@ def write_docx_cell(
         paragraph.paragraph_format.space_before = Pt(0)
         paragraph.paragraph_format.space_after = Pt(2)
         paragraph.paragraph_format.line_spacing = 1.15
-        style_docx_run(paragraph.add_run(line), size=size, bold=bold)
+        is_time_adjustment = line.lstrip("· ").startswith(
+            "근무 시간대 조정 :"
+        )
+        style_docx_run(
+            paragraph.add_run(line),
+            size=size,
+            bold=bold or is_time_adjustment,
+        )
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     set_docx_cell_margins(cell)
 
