@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.43 · 2026-08-12"
+APP_VERSION = "Professional UI v3.44 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -221,10 +221,17 @@ LEGACY_COMMON_MEASURES = {
 }
 
 MEASURE_OPTIONS = [
+    "냉방 장치 가동 (중계차, 방송 시설 등)",
+    "생수/식염포도당 등 제공",
+    "휴식 공간(휴게실, 그늘막 등) 운영",
+    "근무현장 의무시설 확인 및 공지",
+    "냉방 장치 가동 공간에서 근무(29℃ 이하)",
+    "1시간 이내 10분 이상 휴식",
     "2시간 이내 20분 이상 휴식",
-    "이동 간 휴식",
-    "대기 휴식",
+    "근무 시간대 조정",
 ]
+
+TIME_ADJUST_REASON_PREFIX = "근무 시간대 조정 사유:"
 
 TIME_FIELD_COLUMNS = {
     "work_start": "근무시작",
@@ -3179,8 +3186,22 @@ def custom_measure_text(value: Any) -> str:
         if part.strip()
     ]
     return " | ".join(
-        part for part in parts if part not in MEASURE_OPTIONS
+        part for part in parts
+        if part not in MEASURE_OPTIONS
+        and not part.startswith(TIME_ADJUST_REASON_PREFIX)
     )
+
+
+def time_adjust_reason_text(value: Any) -> str:
+    parts = [
+        part.strip()
+        for part in re.split(r"\s*\|\s*", clean_text(value))
+        if part.strip()
+    ]
+    for part in parts:
+        if part.startswith(TIME_ADJUST_REASON_PREFIX):
+            return part[len(TIME_ADJUST_REASON_PREFIX):].strip()
+    return ""
 
 
 def make_csv_bytes(dataframe: pd.DataFrame) -> bytes:
@@ -4032,19 +4053,10 @@ def render_form(
             "시행한 조치와 특이사항을 남깁니다.",
         )
 
-        common_measures = common_measures_for_sport(sport)
+        common_measures = ""
 
         st.markdown(
-            '<div class="field-label">공통 조치사항</div>',
-            unsafe_allow_html=True,
-        )
-        st.info(
-            f"**{sport} 공통 조치사항**\n\n"
-            f"{common_measures}"
-        )
-
-        st.markdown(
-            '<div class="field-label">추가 시행 조치</div>',
+            '<div class="field-label">시행 조치</div>',
             unsafe_allow_html=True,
         )
         st.caption("복수 선택 가능합니다. 다시 누르면 선택이 해제됩니다.")
@@ -4056,11 +4068,9 @@ def render_form(
             )
         )
 
-        measure_columns = st.columns(3)
-        for index, (column, measure) in enumerate(
-            zip(measure_columns, MEASURE_OPTIONS)
-        ):
-            with column:
+        measure_columns = st.columns(2)
+        for index, measure in enumerate(MEASURE_OPTIONS):
+            with measure_columns[index % 2]:
                 st.button(
                     measure,
                     key=f"measure_{index}_{nonce}",
@@ -4080,6 +4090,17 @@ def render_form(
                 [],
             )
         )
+
+        time_adjust_reason = ""
+        if "근무 시간대 조정" in measures:
+            time_adjust_reason = st.text_input(
+                "근무시간 조정 사유 *",
+                value=time_adjust_reason_text(
+                    editing_record.get("조치사항")
+                ),
+                placeholder="예: 폭염시간대를 피해 설치 시간을 앞당김",
+                key=f"time_adjust_reason_{nonce}",
+            )
 
         other_measure = st.text_area(
             "그 외 조치사항",
@@ -4141,9 +4162,15 @@ def render_form(
     rest_minutes = (
         20
         if "2시간 이내 20분 이상 휴식" in measures
+        else 10
+        if "1시간 이내 10분 이상 휴식" in measures
         else 0
     )
     saved_measures = list(measures)
+    if "근무 시간대 조정" in measures and time_adjust_reason.strip():
+        saved_measures.append(
+            f"{TIME_ADJUST_REASON_PREFIX} {time_adjust_reason.strip()}"
+        )
     if other_measure.strip():
         saved_measures.append(other_measure.strip())
 
@@ -4161,6 +4188,9 @@ def render_form(
         validation_errors.append(
             "직원 인원과 도급 인원의 합계가 근무자 수와 같아야 합니다."
         )
+
+    if "근무 시간대 조정" in measures and not time_adjust_reason.strip():
+        validation_errors.append("근무시간 조정 사유를 입력해 주세요.")
 
     if not work_start_text or not work_end_text:
         validation_errors.append(
