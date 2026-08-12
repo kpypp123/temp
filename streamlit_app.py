@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.33 · 2026-08-12"
+APP_VERSION = "Professional UI v3.34 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3115,6 +3115,12 @@ def report_team_work_time(records: pd.DataFrame, team: str) -> str:
     return f"{team} {starts[0]}~{ends[-1]}"
 
 
+def report_team_supervisor(records: pd.DataFrame, team: str) -> str:
+    team_rows = records[records["팀"] == team]
+    supervisors = unique_texts(team_rows["작성자"].tolist())
+    return f"{team} : {' / '.join(supervisors) if supervisors else '-'}"
+
+
 def replace_report_text(xml_text: str, old: str, new: str) -> str:
     return xml_text.replace(old, html.escape(new, quote=False), 1)
 
@@ -3176,12 +3182,32 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
     notes = " / ".join(unique_texts(records["특이사항"].tolist()))
 
     replacements = [
+        ("야구 / 삼성야구장", site_text),
         ("종목 / 장소명", site_text),
+        ("2026.08.13", work_date_text),
         ("2026.08.10", work_date_text),
+        ("중계팀 18:30~21:30", report_team_work_time(records, "중계팀")),
+        ("영상팀 18:30~21:30", report_team_work_time(records, "영상팀")),
         ("중계팀 08:00~17:00", report_team_work_time(records, "중계팀")),
         ("영상팀 08:00~17:00", report_team_work_time(records, "영상팀")),
+        ("중계팀 : 홍길동", report_team_supervisor(records, "중계팀")),
+        ("영상팀 : 홍길동", report_team_supervisor(records, "영상팀")),
+        ("해당 없음", heat_time),
         ("08:00~15:00", heat_time),
+        ("28.9℃~30.9℃", temperature_text),
         ("31℃~33℃", temperature_text),
+        (
+            "- 중계차·장비차·중계석·중계스태프실 냉방 가동",
+            f"- {common_lines[0]}",
+        ),
+        (
+            "냉방 공간 체감온도 27℃ 이하 유지",
+            common_lines[1],
+        ),
+        (
+            "- 생수·냉음료·식염포도당·폭염질환 응급키트 비치 및 위치 공유",
+            f"- {common_lines[2]}",
+        ),
         (
             "- 중계차, 중계석, 휴게실 냉방 가동(체감온도 OO℃ 이하 유지)",
             f"- {common_lines[0]}",
@@ -3196,6 +3222,7 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
             "  - 예시 1) 제작팀 협의 사항 적용 : ",
             "  - " if notes else "",
         ),
+        ("강조효과 테스트 2", notes),
         ("영상팀 필드카메라 중요 선수 외 이글 또는 버디", notes),
         ("상황까지", ""),
         ("만", ""),
@@ -3203,9 +3230,14 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
         ("  - 예시 2) 일정 조정 : 기존 출근시간 대비 1시간 조기 출근하여 실외 작업을 조기", ""),
         ("                       진행하고, 폭염시간대에는 1시간 이내 20분 이상 휴게시간을", ""),
         ("                       확보하여 운영", ""),
-        ("- 중계차 및 중계석 등 냉방공간 근무 → ", report_team_summary(records, "중계팀")),
+        ("- 중계차 및 중계석 등 냉방공간 근무 → ", "__CHECKTEMP_BROADCAST_MEASURES__"),
+        ("- 조치사항 기록 없음", "__CHECKTEMP_BROADCAST_MEASURES__"),
         ("폭염작업 해당 없음", ""),
-        ("- 1시간 이내 10분 이상 휴게시간 부여", report_team_summary(records, "영상팀")),
+        ("- 1시간 이내 10분 이상 휴게시간 부여", "__CHECKTEMP_VIDEO_MEASURES__"),
+        (
+            "- 1시간 이내 10분 이상 휴식 / 누적 휴게시간 10분",
+            "__CHECKTEMP_VIDEO_MEASURES__",
+        ),
         (" · 필드카메라 : 중요 선수 외 이글·버디 워킹 촬영 후 휴식", ""),
         (" · W/L 카메라 : 혹서기 지원인력을 활용한 교대근무 실시", ""),
     ]
@@ -3220,6 +3252,23 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                     section_xml = payload.decode("utf-8")
                     for old, new in replacements:
                         section_xml = replace_report_text(section_xml, old, new)
+
+                    # 치환된 조치 문구가 다음 검색어로 다시 오인되지 않도록
+                    # 마지막 단계에서 팀별 임시표시를 실제 내용으로 바꿉니다.
+                    section_xml = section_xml.replace(
+                        "__CHECKTEMP_BROADCAST_MEASURES__",
+                        html.escape(
+                            report_team_summary(records, "중계팀"),
+                            quote=False,
+                        ),
+                    )
+                    section_xml = section_xml.replace(
+                        "__CHECKTEMP_VIDEO_MEASURES__",
+                        html.escape(
+                            report_team_summary(records, "영상팀"),
+                            quote=False,
+                        ),
+                    )
 
                     # 공통 예방조치의 마지막 항목으로 10분 휴식 기준을 고정 표시합니다.
                     schedule_heading = (
