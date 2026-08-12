@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.41 · 2026-08-12"
+APP_VERSION = "Professional UI v3.42 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3814,26 +3814,9 @@ def render_form(
                 key=f"contractor_count_{nonce}",
             )
 
-        author = st.text_input(
-            "작성자",
-            value=clean_text(
-                editing_record.get("작성자")
-            ),
-            placeholder="예: 홍길동",
-            key=f"author_{nonce}",
-        )
-
-        st.divider()
-
-        render_section_heading(
-            "02",
-            "시간 기록",
-            "근무·폭염 시간을 직접 입력합니다.",
-        )
-
         st.caption(
-            "24시간 형식으로 입력하세요. 예: 오전 9시는 09:00, "
-            "오후 6시는 18:00"
+            "근무시간은 24시간 형식으로 입력하세요. "
+            "예: 오전 9시는 09:00, 오후 6시는 18:00"
         )
 
         work_left, work_right = st.columns(2)
@@ -3863,6 +3846,28 @@ def render_form(
         st.caption(
             "숫자만 입력해도 됩니다. Enter를 누르면 "
             "2256→22:56, 930→09:30, 18→18:00으로 자동 변환됩니다."
+        )
+
+        author = st.text_input(
+            "작성자",
+            value=clean_text(
+                editing_record.get("작성자")
+            ),
+            placeholder="예: 홍길동",
+            key=f"author_{nonce}",
+        )
+
+        st.divider()
+
+        render_section_heading(
+            "02",
+            "시간 기록",
+            "폭염 노출 시간을 직접 입력합니다.",
+        )
+
+        st.caption(
+            "폭염시간은 24시간 형식으로 입력하세요. "
+            "예: 오후 1시 30분은 13:30"
         )
 
         heat_left, heat_right = st.columns(2)
