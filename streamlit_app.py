@@ -3674,8 +3674,12 @@ def make_heat_report_docx_bytes(records: pd.DataFrame) -> bytes:
 
 
 @st.cache_data(show_spinner=False, ttl=86400)
-def cached_heat_report_docx_bytes(records_json: str) -> bytes:
+def cached_heat_report_docx_bytes(
+    records_json: str,
+    report_layout_version: str,
+) -> bytes:
     """같은 기록의 Word 보고서를 24시간 캐시해 재생성을 줄입니다."""
+    _ = report_layout_version
     records = pd.read_json(io.StringIO(records_json), orient="records")
     return make_heat_report_docx_bytes(records)
 
@@ -5080,7 +5084,10 @@ def render_records(
             force_ascii=False,
             date_format="iso",
         )
-        report_bytes = cached_heat_report_docx_bytes(records_json)
+        report_bytes = cached_heat_report_docx_bytes(
+            records_json,
+            "worker-count-v2",
+        )
         safe_site_name = re.sub(
             r"[^0-9A-Za-z가-힣_-]+",
             "_",
