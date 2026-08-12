@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.42 · 2026-08-12"
+APP_VERSION = "Professional UI v3.43 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -899,6 +899,64 @@ def set_time_now(field: str, nonce: int) -> None:
 
 def weather_notice_key(nonce: int) -> str:
     return f"weather_notice_{nonce}"
+
+
+@st.cache_resource(show_spinner=False)
+def persistent_weather_results() -> dict[str, dict[str, Any]]:
+    """앱 재접속 시에도 같은 조회 조건의 결과를 재사용합니다."""
+    return {}
+
+
+def weather_result_cache_key(nonce: int) -> str:
+    selected_date = st.session_state.get(f"date_{nonce}")
+    date_text = (
+        selected_date.isoformat()
+        if isinstance(selected_date, date)
+        else clean_text(selected_date)
+    )
+    values = [
+        date_text,
+        clean_text(st.session_state.get(f"site_{nonce}")).casefold(),
+        clean_text(st.session_state.get(f"manual_work_start_{nonce}")),
+        clean_text(st.session_state.get(f"manual_work_end_{nonce}")),
+        clean_text(st.session_state.get(f"manual_heat_start_{nonce}")),
+        clean_text(st.session_state.get(f"manual_heat_end_{nonce}")),
+    ]
+    return "|".join(values)
+
+
+def save_weather_result_cache(nonce: int) -> None:
+    notice = st.session_state.get(weather_notice_key(nonce))
+    temperature = clean_text(st.session_state.get(f"temperature_{nonce}"))
+    cache_key = weather_result_cache_key(nonce)
+    if not cache_key.strip("|") or not temperature or not notice:
+        return
+    cache = persistent_weather_results()
+    cache[cache_key] = {
+        "temperature": temperature,
+        "notice": notice,
+        "saved_at": datetime.now(KST).timestamp(),
+    }
+    # 서버 메모리가 불필요하게 커지지 않도록 최근 300건만 유지합니다.
+    if len(cache) > 300:
+        oldest_key = min(cache, key=lambda key: cache[key]["saved_at"])
+        cache.pop(oldest_key, None)
+
+
+def restore_weather_result_cache(nonce: int) -> bool:
+    cache_key = weather_result_cache_key(nonce)
+    cached = persistent_weather_results().get(cache_key)
+    if not cached:
+        return False
+    # 12시간 동안만 재사용하여 오래된 관측값이 남지 않게 합니다.
+    if datetime.now(KST).timestamp() - float(cached["saved_at"]) > 43200:
+        persistent_weather_results().pop(cache_key, None)
+        return False
+    if weather_notice_key(nonce) not in st.session_state:
+        st.session_state[weather_notice_key(nonce)] = cached["notice"]
+    if f"temperature_{nonce}" not in st.session_state:
+        st.session_state[f"temperature_{nonce}"] = cached["temperature"]
+    return True
 
 
 def get_site_coordinates(site_name: str) -> tuple[float, float] | None:
@@ -2016,6 +2074,7 @@ def record_heat_start_with_weather(
             f"{forecast_count}개 시간자료로 확인했습니다. {heat_message} "
             "예보는 변경될 수 있으므로 당일 또는 작업 후 다시 조회해 주세요.",
         )
+        save_weather_result_cache(nonce)
         return
 
     range_label = ""
@@ -2240,6 +2299,7 @@ def record_heat_start_with_weather(
             f"안전을 위해 최고 체감온도가 더 높은 "
             f"{selected_source} 결과 {temperature_range}℃를 자동 적용했습니다.",
         )
+        save_weather_result_cache(nonce)
         return
 
     grid_temperature: str | None = None
@@ -2310,6 +2370,7 @@ def record_heat_start_with_weather(
         f"{matched_name} · {' / '.join(detail_parts)} · "
         f"안전을 위해 높은 값 {applied_temperature}℃를 자동 적용했습니다.",
     )
+    save_weather_result_cache(nonce)
 
 
 def auto_lookup_future_weather(nonce: int) -> None:
@@ -3861,8 +3922,8 @@ def render_form(
 
         render_section_heading(
             "02",
-            "시간 기록",
-            "폭염 노출 시간을 직접 입력합니다.",
+            "폭염 정보",
+            "폭염작업 시간과 체감온도를 기록합니다.",
         )
 
         st.caption(
@@ -3874,7 +3935,7 @@ def render_form(
 
         with heat_left:
             heat_start_input = st.text_input(
-                "폭염 시작",
+                "폭염작업 시작",
                 value=clean_text(editing_record.get("폭염시작")),
                 placeholder="예: 1330 → 13:30",
                 key=f"manual_heat_start_{nonce}",
@@ -3884,7 +3945,7 @@ def render_form(
 
         with heat_right:
             heat_end_input = st.text_input(
-                "폭염 종료",
+                "폭염작업 종료",
                 value=clean_text(editing_record.get("폭염종료")),
                 placeholder="예: 1700 → 17:00",
                 key=f"manual_heat_end_{nonce}",
@@ -3898,12 +3959,16 @@ def render_form(
         heat_end = parse_time_value(heat_end_input)
 
         st.button(
-            "시간대 체감온도 자동 조회",
+            "체감온도 자동 조회",
             key=f"lookup_weather_{nonce}",
             use_container_width=True,
             on_click=record_heat_start_with_weather,
             args=(nonce, False),
         )
+
+        cache_restored = restore_weather_result_cache(nonce)
+        if cache_restored:
+            st.caption("동일한 조회 조건의 최근 결과를 캐시에서 불러왔습니다.")
 
         weather_notice = st.session_state.get(
             weather_notice_key(nonce)
@@ -3931,19 +3996,6 @@ def render_form(
                     "\n".join(weather_debug_lines),
                     language="text",
                 )
-
-        st.caption(
-            "휴게시간은 아래 조치사항의 휴식 버튼을 선택해 기록합니다."
-        )
-
-        st.divider()
-
-        render_section_heading(
-            "03",
-            "폭염 정보",
-            "현장에서 확인한 체감온도를 "
-            "직접 입력합니다.",
-        )
 
         is_forecast_entry = work_date > datetime.now(KST).date()
         if is_forecast_entry:
@@ -3975,7 +4027,7 @@ def render_form(
         st.divider()
 
         render_section_heading(
-            "04",
+            "03",
             "조치 사항",
             "시행한 조치와 특이사항을 남깁니다.",
         )
