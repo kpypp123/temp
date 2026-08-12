@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.40 · 2026-08-12"
+APP_VERSION = "Professional UI v3.41 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -50,12 +50,35 @@ KMA_VILLAGE_FORECAST_API_URL = (
 KAKAO_PLACE_API_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 FORECAST_HEAT_THRESHOLD = 31.0
 
+OLD_CURRENT_COLUMNS = [
+    "id",
+    "작업날짜",
+    "종목",
+    "현장명",
+    "팀",
+    "근무시작",
+    "근무종료",
+    "작성자",
+    "폭염시작",
+    "폭염종료",
+    "체감온도",
+    "휴게시간",
+    "공통 조치사항",
+    "조치사항",
+    "특이사항",
+    "등록시간",
+    "수정시간",
+]
+
 COLUMNS = [
     "id",
     "작업날짜",
     "종목",
     "현장명",
     "팀",
+    "근무자수",
+    "직원",
+    "도급",
     "근무시작",
     "근무종료",
     "작성자",
@@ -111,7 +134,7 @@ LEGACY_COLUMNS = [
     "수정시간",
 ]
 
-TEAM_OPTIONS = ["중계팀", "영상팀"]
+TEAM_OPTIONS = ["중계", "영상", "기타"]
 
 SPORT_OPTIONS = [
     "프로야구",
@@ -1846,7 +1869,7 @@ def record_heat_start_with_weather(
     if not site_name:
         st.session_state[notice_key] = (
             "warning",
-            "현장명을 먼저 입력하면 체감온도를 자동 조회할 수 있습니다.",
+            "근무장소를 먼저 입력하면 체감온도를 자동 조회할 수 있습니다.",
         )
         return
 
@@ -1879,7 +1902,7 @@ def record_heat_start_with_weather(
             st.session_state[notice_key] = (
                 "warning",
                 f"'{site_name}' 장소 검색에 실패해 시작시간만 기록했습니다. "
-                f"현장명을 더 정확하게 입력해 주세요. ({error})",
+                f"근무장소를 더 정확하게 입력해 주세요. ({error})",
             )
             return
 
@@ -2374,6 +2397,10 @@ def initialize_team_state(
     key = team_state_key(nonce)
     if key not in st.session_state:
         current_team = clean_text(editing_record.get("팀"))
+        current_team = {
+            "중계팀": "중계",
+            "영상팀": "영상",
+        }.get(current_team, current_team)
         st.session_state[key] = (
             current_team
             if current_team in TEAM_OPTIONS
@@ -2635,6 +2662,10 @@ def migrate_sheet_to_current(
             for column in COLUMNS
         }
         new_record["종목"] = sport
+        new_record["팀"] = {
+            "중계팀": "중계",
+            "영상팀": "영상",
+        }.get(clean_text(old_record.get("팀")), clean_text(old_record.get("팀")))
         new_record["공통 조치사항"] = (
             old_record.get("공통 조치사항")
             or common_measures_for_sport(sport)
@@ -2670,6 +2701,8 @@ def ensure_headers(worksheet: gspread.Worksheet) -> list[str]:
         return headers
 
     if (
+        headers[: len(OLD_CURRENT_COLUMNS)] == OLD_CURRENT_COLUMNS
+        or
         headers[: len(PRE_COMMON_COLUMNS)] == PRE_COMMON_COLUMNS
         or headers[: len(LEGACY_COLUMNS)] == LEGACY_COLUMNS
     ):
@@ -2868,7 +2901,8 @@ def load_records() -> pd.DataFrame:
     if headers[: len(COLUMNS)] == COLUMNS:
         pass
     elif (
-        headers[: len(PRE_COMMON_COLUMNS)] == PRE_COMMON_COLUMNS
+        headers[: len(OLD_CURRENT_COLUMNS)] == OLD_CURRENT_COLUMNS
+        or headers[: len(PRE_COMMON_COLUMNS)] == PRE_COMMON_COLUMNS
         or headers[: len(LEGACY_COLUMNS)] == LEGACY_COLUMNS
     ):
         migrate_sheet_to_current(worksheet, values)
@@ -3096,7 +3130,8 @@ def make_csv_bytes(dataframe: pd.DataFrame) -> bytes:
             {
                 "작업날짜": "근무일자",
                 "종목": "업무내용",
-                "작성자": "선임 감독",
+                "현장명": "근무장소",
+                "팀": "부서",
             }.get(column, column)
             for column in COLUMNS
         ]
@@ -3120,7 +3155,8 @@ def unique_texts(values: list[Any]) -> list[str]:
 
 
 def report_team_summary(records: pd.DataFrame, team: str) -> str:
-    team_rows = records[records["팀"] == team]
+    aliases = {team, team.removesuffix("팀")}
+    team_rows = records[records["팀"].isin(aliases)]
     if team_rows.empty:
         return "- 기록 없음"
 
@@ -3149,21 +3185,25 @@ def report_team_summary(records: pd.DataFrame, team: str) -> str:
 
 
 def report_team_work_time(records: pd.DataFrame, team: str) -> str:
-    team_rows = records[records["팀"] == team]
+    aliases = {team, team.removesuffix("팀")}
+    team_rows = records[records["팀"].isin(aliases)]
+    department = team.removesuffix("팀")
     if team_rows.empty:
-        return f"{team} -"
+        return f"{department} -"
 
     starts = sorted(unique_texts(team_rows["근무시작"].tolist()))
     ends = sorted(unique_texts(team_rows["근무종료"].tolist()))
     if not starts or not ends:
-        return f"{team} -"
-    return f"{team} {starts[0]}~{ends[-1]}"
+        return f"{department} -"
+    return f"{department} {starts[0]}~{ends[-1]}"
 
 
 def report_team_supervisor(records: pd.DataFrame, team: str) -> str:
-    team_rows = records[records["팀"] == team]
+    aliases = {team, team.removesuffix("팀")}
+    team_rows = records[records["팀"].isin(aliases)]
     supervisors = unique_texts(team_rows["작성자"].tolist())
-    return f"{team} : {' / '.join(supervisors) if supervisors else '-'}"
+    department = team.removesuffix("팀")
+    return f"{department} : {' / '.join(supervisors) if supervisors else '-'}"
 
 
 def replace_report_text(xml_text: str, old: str, new: str) -> str:
@@ -3394,7 +3434,8 @@ def make_excel_bytes(dataframe: pd.DataFrame) -> bytes:
         display_name = {
             "작업날짜": "근무일자",
             "종목": "업무내용",
-            "작성자": "선임 감독",
+            "현장명": "근무장소",
+            "팀": "부서",
         }.get(column_name, column_name)
         cell = worksheet.cell(row=1, column=column_index, value=display_name)
         cell.fill = header_fill
@@ -3443,6 +3484,9 @@ def make_excel_bytes(dataframe: pd.DataFrame) -> bytes:
         "종목": 12,
         "현장명": 24,
         "팀": 10,
+        "근무자수": 10,
+        "직원": 8,
+        "도급": 8,
         "근무시작": 10,
         "근무종료": 10,
         "작성자": 12,
@@ -3678,7 +3722,7 @@ def render_form(
         )
 
         site = st.text_input(
-            "현장명 *",
+            "근무장소 *",
             value=clean_text(
                 editing_record.get("현장명")
             ),
@@ -3689,14 +3733,14 @@ def render_form(
         )
 
         st.markdown(
-            '<div class="field-label">팀 선택 *</div>',
+            '<div class="field-label">부서 선택 *</div>',
             unsafe_allow_html=True,
         )
 
         selected_team = clean_text(
             st.session_state.get(team_state_key(nonce))
         )
-        team_left, team_right = st.columns(2)
+        team_left, team_center, team_right = st.columns(3)
 
         with team_left:
             st.button(
@@ -3705,33 +3749,73 @@ def render_form(
                 use_container_width=True,
                 type=(
                     "primary"
-                    if selected_team == "중계팀"
+                    if selected_team == "중계"
                     else "secondary"
                 ),
                 on_click=set_team,
-                args=("중계팀", nonce),
+                args=("중계", nonce),
             )
 
-        with team_right:
+        with team_center:
             st.button(
                 "영상",
                 key=f"team_video_{nonce}",
                 use_container_width=True,
                 type=(
                     "primary"
-                    if selected_team == "영상팀"
+                    if selected_team == "영상"
                     else "secondary"
                 ),
                 on_click=set_team,
-                args=("영상팀", nonce),
+                args=("영상", nonce),
+            )
+
+        with team_right:
+            st.button(
+                "기타",
+                key=f"team_other_{nonce}",
+                use_container_width=True,
+                type=(
+                    "primary"
+                    if selected_team == "기타"
+                    else "secondary"
+                ),
+                on_click=set_team,
+                args=("기타", nonce),
             )
 
         team = clean_text(
             st.session_state.get(team_state_key(nonce))
         )
 
+        worker_count = st.number_input(
+            "근무자 수 *",
+            min_value=0,
+            max_value=500,
+            value=parse_int(editing_record.get("근무자수")),
+            step=1,
+            key=f"worker_count_{nonce}",
+        )
+
+        headcount_options = list(range(0, 501))
+        staff_left, contractor_right = st.columns(2)
+        with staff_left:
+            employee_count = st.selectbox(
+                "직원 인원",
+                headcount_options,
+                index=min(parse_int(editing_record.get("직원")), 500),
+                key=f"employee_count_{nonce}",
+            )
+        with contractor_right:
+            contractor_count = st.selectbox(
+                "도급 인원",
+                headcount_options,
+                index=min(parse_int(editing_record.get("도급")), 500),
+                key=f"contractor_count_{nonce}",
+            )
+
         author = st.text_input(
-            "선임 감독",
+            "작성자",
             value=clean_text(
                 editing_record.get("작성자")
             ),
@@ -3859,7 +3943,7 @@ def render_form(
         is_forecast_entry = work_date > datetime.now(KST).date()
         if is_forecast_entry:
             st.info(
-                "미래 날짜 사전입력입니다. 현장명과 근무시간을 모두 "
+                "미래 날짜 사전입력입니다. 근무장소와 근무시간을 모두 "
                 "입력하면 단기예보 체감온도와 예상 폭염시간이 자동 "
                 "적용됩니다. 작업 후 기록 조회의 수정 버튼으로 실제값을 "
                 "반영할 수 있습니다."
@@ -4010,7 +4094,15 @@ def render_form(
 
     if not site.strip():
         validation_errors.append(
-            "현장명을 입력해 주세요."
+            "근무장소를 입력해 주세요."
+        )
+
+    if worker_count < 1:
+        validation_errors.append("근무자 수를 1명 이상 입력해 주세요.")
+
+    if employee_count + contractor_count != worker_count:
+        validation_errors.append(
+            "직원 인원과 도급 인원의 합계가 근무자 수와 같아야 합니다."
         )
 
     if not work_start_text or not work_end_text:
@@ -4053,6 +4145,9 @@ def render_form(
         "종목": sport,
         "현장명": site.strip(),
         "팀": team,
+        "근무자수": str(worker_count),
+        "직원": str(employee_count),
+        "도급": str(contractor_count),
         "근무시작": work_start_text,
         "근무종료": work_end_text,
         "작성자": author.strip(),
@@ -4161,13 +4256,13 @@ def render_records(
         expanded=False,
     ):
         search_text = st.text_input(
-            "업무내용·현장명·선임 감독 검색",
+            "업무내용·근무장소·작성자 검색",
             placeholder="검색어 입력",
             key="record_search",
         )
 
         team_filter = st.selectbox(
-            "팀",
+            "부서",
             ["전체"] + TEAM_OPTIONS,
             key="team_filter",
         )
@@ -4286,7 +4381,7 @@ def render_records(
 
     st.markdown("### 폭염 보고서 다운로드")
     st.caption(
-        "같은 근무일자와 현장명의 중계팀·영상팀 기록을 "
+        "같은 근무일자와 근무장소의 부서별 기록을 "
         "한글 HWPX 보고서 한 장으로 묶습니다."
     )
 
@@ -4346,7 +4441,7 @@ def render_records(
         record_id = clean_text(record.get("id"))
         site = (
             markdown_escape(record.get("현장명"))
-            or "현장명 미입력"
+            or "근무장소 미입력"
         )
         work_date = markdown_escape(
             record.get("작업날짜")
@@ -4366,7 +4461,7 @@ def render_records(
             )
             team_text = (
                 clean_text(record.get("팀"))
-                or "팀 미입력"
+                or "부서 미입력"
             )
             sport_text = (
                 normalize_sport(
@@ -4379,6 +4474,9 @@ def render_records(
                 clean_text(record.get("작성자"))
                 or "-"
             )
+            worker_text = clean_text(record.get("근무자수")) or "-"
+            employee_text = clean_text(record.get("직원")) or "0"
+            contractor_text = clean_text(record.get("도급")) or "0"
             work_time_text = (
                 f"{clean_text(record.get('근무시작')) or '-'}"
                 " ~ "
@@ -4424,7 +4522,8 @@ def render_records(
 
             st.caption(
                 f"{work_date} · {sport_text} · {team_text} · "
-                f"선임 감독 {author_text}"
+                f"근무자 {worker_text}명(직원 {employee_text}·도급 {contractor_text}) · "
+                f"작성자 {author_text}"
             )
 
             st.markdown(
