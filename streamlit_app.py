@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.47 · 2026-08-12"
+APP_VERSION = "Professional UI v3.48 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -2481,6 +2481,18 @@ def set_team(team: str, nonce: int) -> None:
         st.session_state[team_state_key(nonce)] = team
 
 
+def sync_worker_count(nonce: int) -> None:
+    employee_count = parse_int(
+        st.session_state.get(f"employee_count_{nonce}")
+    )
+    contractor_count = parse_int(
+        st.session_state.get(f"contractor_count_{nonce}")
+    )
+    st.session_state[f"worker_count_{nonce}"] = (
+        employee_count + contractor_count
+    )
+
+
 def measures_state_key(nonce: int) -> str:
     return f"selected_measures_{nonce}"
 
@@ -3879,6 +3891,19 @@ def render_form(
         if team:
             total_col, employee_col, contractor_col = st.columns(3)
             headcount_options = list(range(0, 501))
+            worker_count_key = f"worker_count_{nonce}"
+            if worker_count_key not in st.session_state:
+                saved_worker_count = parse_int(
+                    editing_record.get("근무자수"),
+                    -1,
+                )
+                if saved_worker_count >= 0:
+                    st.session_state[worker_count_key] = saved_worker_count
+                else:
+                    st.session_state[worker_count_key] = (
+                        parse_int(editing_record.get("직원"))
+                        + parse_int(editing_record.get("도급"))
+                    )
             with employee_col:
                 employee_count = st.selectbox(
                     "직원",
@@ -3886,6 +3911,8 @@ def render_form(
                     index=min(parse_int(editing_record.get("직원")), 500),
                     key=f"employee_count_{nonce}",
                     format_func=lambda value: f"{value}명",
+                    on_change=sync_worker_count,
+                    args=(nonce,),
                 )
             with contractor_col:
                 contractor_count = st.selectbox(
@@ -3894,12 +3921,22 @@ def render_form(
                     index=min(parse_int(editing_record.get("도급")), 500),
                     key=f"contractor_count_{nonce}",
                     format_func=lambda value: f"{value}명",
+                    on_change=sync_worker_count,
+                    args=(nonce,),
                 )
-            worker_count = employee_count + contractor_count
             with total_col:
-                st.metric("근무자 수", f"{worker_count}명")
+                worker_count = st.number_input(
+                    "근무자 수",
+                    min_value=0,
+                    max_value=1000,
+                    step=1,
+                    key=worker_count_key,
+                )
 
-            st.caption("직원과 도급 인원을 선택하면 근무자 수가 자동 계산됩니다.")
+            st.caption(
+                "직원과 도급 인원을 선택하면 자동 합산됩니다. "
+                "필요하면 근무자 수를 직접 수정할 수도 있습니다."
+            )
 
             st.caption(
                 "근무시간은 24시간 형식으로 입력하세요. "
