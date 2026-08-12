@@ -27,8 +27,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 
-APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.36 · 2026-08-12"
+APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
+APP_VERSION = "Professional UI v3.37 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -114,15 +114,15 @@ LEGACY_COLUMNS = [
 TEAM_OPTIONS = ["중계팀", "영상팀"]
 
 SPORT_OPTIONS = [
-    "야구",
-    "남자골프",
-    "여자골프",
-    "기타스포츠(실내)",
-    "기타스포츠(실외)",
+    "프로야구",
+    "KLPGA",
+    "KPGA",
+    "기타 (실외)",
+    "기타 (실내)",
 ]
 
 SPORT_COMMON_MEASURES = {
-    "남자골프": (
+    "KPGA": (
         "- 중계차, 중계룸, 카메라룸, W/L룸, 몽골 텐트 냉방 가동\n"
         "  (냉방 공간 체감온도 27℃ 이하 유지)\n"
         "- 개인별 아이스박스·우산 지급 및 생수·얼음물 비치\n"
@@ -130,7 +130,7 @@ SPORT_COMMON_MEASURES = {
         "- 폭염 시간대 불필요한 외부 활동 최소화\n"
         "- 외부 근무자 1시간 이내 10분 이상 휴식 부여"
     ),
-    "여자골프": (
+    "KLPGA": (
         "- 중계차, 중계룸, 카메라룸, W/L룸, 몽골 텐트 냉방 가동\n"
         "  (냉방 공간 체감온도 27℃ 이하 유지)\n"
         "- 개인별 아이스박스·우산 지급 및 생수·얼음물 비치\n"
@@ -138,7 +138,7 @@ SPORT_COMMON_MEASURES = {
         "- 폭염 시간대 불필요한 외부 활동 최소화\n"
         "- 외부 근무자 1시간 이내 10분 이상 휴식 부여"
     ),
-    "야구": (
+    "프로야구": (
         "- 중계차·장비차·중계석·중계스태프실 냉방 가동\n"
         "  · 냉방 공간 체감온도 27℃ 이하 유지\n"
         "- 생수·냉음료·식염포도당·폭염질환 응급키트 비치 및 위치 공유\n"
@@ -146,7 +146,7 @@ SPORT_COMMON_MEASURES = {
         "- 이상 증상 발생 시 10~15분간 냉방 공간에서 휴식하도록\n"
         "  제작팀과 사전 협의"
     ),
-    "기타스포츠(실내)": (
+    "기타 (실내)": (
         "- 중계차, 휴게실, 체육관 냉방 가동\n"
         "  (냉방 공간 체감온도 27℃ 이하 유지)\n"
         "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 음료 지급\n"
@@ -156,7 +156,7 @@ SPORT_COMMON_MEASURES = {
         "- 케이블 설치 등 외부 작업 완료\n"
         "  1시간 이내 10분 이상 휴게시간 부여"
     ),
-    "기타스포츠(실외)": (
+    "기타 (실외)": (
         "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 음료 지급\n"
         "- 폭염 시간대 불필요한 외부 활동 최소화\n"
         "- 중계차, 체육관 냉방 가동 공간에서 근무, 폭염 작업 해당 없음\n"
@@ -2521,23 +2521,32 @@ def column_letter(index: int) -> str:
 def infer_sport(site_name: Any) -> str:
     site = clean_text(site_name)
     if any(keyword in site for keyword in ("야구", "구장", "베이스볼")):
-        return "야구"
+        return "프로야구"
     if any(keyword in site.upper() for keyword in ("KLPGA", "여자골프")):
-        return "여자골프"
+        return "KLPGA"
     if (
         "KPGA" in site.upper()
         or any(keyword in site for keyword in ("골프", "CC", "cc", "컨트리클럽"))
     ):
-        return "남자골프"
-    return "기타스포츠(실내)"
+        return "KPGA"
+    return "기타 (실내)"
 
 
 def normalize_sport(value: Any, site_name: Any = "") -> str:
     sport = clean_text(value)
-    if sport in ("기타", "기타스포츠"):
-        return "기타스포츠(실내)"
+    legacy_map = {
+        "야구": "프로야구",
+        "남자골프": "KPGA",
+        "여자골프": "KLPGA",
+        "기타스포츠(실외)": "기타 (실외)",
+        "기타스포츠(실내)": "기타 (실내)",
+        "기타스포츠": "기타 (실내)",
+        "기타": "기타 (실내)",
+    }
+    if sport in legacy_map:
+        return legacy_map[sport]
     if sport == "골프":
-        return infer_sport(site_name) if site_name else "남자골프"
+        return infer_sport(site_name) if site_name else "KPGA"
     if sport in SPORT_OPTIONS:
         return sport
     return infer_sport(site_name)
@@ -2547,7 +2556,7 @@ def common_measures_for_sport(sport: Any) -> str:
     normalized = normalize_sport(sport)
     return SPORT_COMMON_MEASURES.get(
         normalized,
-        SPORT_COMMON_MEASURES["기타스포츠(실내)"],
+        SPORT_COMMON_MEASURES["기타 (실내)"],
     )
 
 
@@ -2558,7 +2567,14 @@ def strip_legacy_common_measures(sport: Any, value: Any) -> str:
         return ""
 
     normalized_sport = normalize_sport(sport)
-    legacy = LEGACY_COMMON_MEASURES.get(normalized_sport, "")
+    legacy_key = {
+        "프로야구": "야구",
+        "KPGA": "남자골프",
+        "KLPGA": "여자골프",
+        "기타 (실외)": "기타스포츠(실외)",
+        "기타 (실내)": "기타스포츠(실내)",
+    }.get(normalized_sport, normalized_sport)
+    legacy = LEGACY_COMMON_MEASURES.get(legacy_key, "")
     legacy_parts = {
         part.strip()
         for part in legacy.split("|")
@@ -3067,7 +3083,14 @@ def make_csv_bytes(dataframe: pd.DataFrame) -> bytes:
     output = io.StringIO()
     writer = csv.writer(output, lineterminator="\n")
     writer.writerow(
-        ["선임 감독" if column == "작성자" else column for column in COLUMNS]
+        [
+            {
+                "작업날짜": "근무일자",
+                "종목": "업무내용",
+                "작성자": "선임 감독",
+            }.get(column, column)
+            for column in COLUMNS
+        ]
     )
 
     for _, row in dataframe[COLUMNS].iterrows():
@@ -3359,7 +3382,11 @@ def make_excel_bytes(dataframe: pd.DataFrame) -> bytes:
     )
 
     for column_index, column_name in enumerate(COLUMNS, start=1):
-        display_name = "선임 감독" if column_name == "작성자" else column_name
+        display_name = {
+            "작업날짜": "근무일자",
+            "종목": "업무내용",
+            "작성자": "선임 감독",
+        }.get(column_name, column_name)
         cell = worksheet.cell(row=1, column=column_index, value=display_name)
         cell.fill = header_fill
         cell.font = header_font
@@ -3494,11 +3521,11 @@ def render_header() -> None:
             <div>
                 <div class="app-kicker">현장 안전관리</div>
                 <h1 class="app-title">
-                    현장 폭염 조치 기록
+                    폭염대비 온열질환 예방을 위한 조치사항
                 </h1>
                 <p class="app-subtitle">
-                    현장별 근무·폭염 노출·휴게 조치 내역을
-                    기록하고 공동 관리합니다.
+                    폭염작업이란 31℃ 이상인 작업장소에서
+                    연속 2시간 이상 작업하는 것을 말합니다.
                 </p>
             </div>
             <div class="app-version">
@@ -3621,7 +3648,7 @@ def render_form(
         )
 
         work_date = st.date_input(
-            "작업 날짜 *",
+            "근무일자 *",
             value=default_date,
             key=f"date_{nonce}",
             on_change=auto_lookup_future_weather,
@@ -3629,7 +3656,7 @@ def render_form(
         )
 
         sport = st.selectbox(
-            "종목 *",
+            "업무내용 *",
             SPORT_OPTIONS,
             index=option_index(
                 SPORT_OPTIONS,
@@ -4125,7 +4152,7 @@ def render_records(
         expanded=False,
     ):
         search_text = st.text_input(
-            "종목·현장명·선임 감독 검색",
+            "업무내용·현장명·선임 감독 검색",
             placeholder="검색어 입력",
             key="record_search",
         )
@@ -4137,7 +4164,7 @@ def render_records(
         )
 
         sport_filter = st.selectbox(
-            "종목",
+            "업무내용",
             ["전체"] + SPORT_OPTIONS,
             key="sport_filter",
         )
@@ -4250,7 +4277,7 @@ def render_records(
 
     st.markdown("### 폭염 보고서 다운로드")
     st.caption(
-        "같은 작업날짜와 현장명의 중계팀·영상팀 기록을 "
+        "같은 근무일자와 현장명의 중계팀·영상팀 기록을 "
         "한글 HWPX 보고서 한 장으로 묶습니다."
     )
 
@@ -4333,8 +4360,11 @@ def render_records(
                 or "팀 미입력"
             )
             sport_text = (
-                clean_text(record.get("종목"))
-                or "종목 미입력"
+                normalize_sport(
+                    record.get("종목"),
+                    record.get("현장명"),
+                )
+                or "업무내용 미입력"
             )
             author_text = (
                 clean_text(record.get("작성자"))
