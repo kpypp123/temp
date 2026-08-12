@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.44 · 2026-08-12"
+APP_VERSION = "Professional UI v3.45 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -2472,7 +2472,7 @@ def initialize_team_state(
         st.session_state[key] = (
             current_team
             if current_team in TEAM_OPTIONS
-            else TEAM_OPTIONS[0]
+            else ""
         )
 
 
@@ -3870,65 +3870,74 @@ def render_form(
             st.session_state.get(team_state_key(nonce))
         )
 
-        worker_count = st.number_input(
-            "근무자 수 *",
-            min_value=0,
-            max_value=500,
-            value=parse_int(editing_record.get("근무자수")),
-            step=1,
-            key=f"worker_count_{nonce}",
-        )
+        worker_count = 0
+        employee_count = 0
+        contractor_count = 0
+        work_start_input = ""
+        work_end_input = ""
 
-        headcount_options = list(range(0, 501))
-        staff_left, contractor_right = st.columns(2)
-        with staff_left:
-            employee_count = st.selectbox(
-                "직원 인원",
-                headcount_options,
-                index=min(parse_int(editing_record.get("직원")), 500),
-                key=f"employee_count_{nonce}",
-            )
-        with contractor_right:
-            contractor_count = st.selectbox(
-                "도급 인원",
-                headcount_options,
-                index=min(parse_int(editing_record.get("도급")), 500),
-                key=f"contractor_count_{nonce}",
+        if team:
+            worker_count = st.number_input(
+                "근무자 수 *",
+                min_value=0,
+                max_value=500,
+                value=parse_int(editing_record.get("근무자수")),
+                step=1,
+                key=f"worker_count_{nonce}",
             )
 
-        st.caption(
-            "근무시간은 24시간 형식으로 입력하세요. "
-            "예: 오전 9시는 09:00, 오후 6시는 18:00"
-        )
+            headcount_options = list(range(0, 501))
+            staff_left, contractor_right = st.columns(2)
+            with staff_left:
+                employee_count = st.selectbox(
+                    "직원 인원",
+                    headcount_options,
+                    index=min(parse_int(editing_record.get("직원")), 500),
+                    key=f"employee_count_{nonce}",
+                )
+            with contractor_right:
+                contractor_count = st.selectbox(
+                    "도급 인원",
+                    headcount_options,
+                    index=min(parse_int(editing_record.get("도급")), 500),
+                    key=f"contractor_count_{nonce}",
+                )
 
-        work_left, work_right = st.columns(2)
-
-        with work_left:
-            work_start_input = st.text_input(
-                "근무 시작 *",
-                value=clean_text(editing_record.get("근무시작")),
-                placeholder="예: 2256 → 22:56",
-                key=f"manual_work_start_{nonce}",
-                on_change=normalize_manual_time_field,
-                args=("work_start", nonce),
-                kwargs={"trigger_weather": True},
+            st.caption(
+                "근무시간은 24시간 형식으로 입력하세요. "
+                "예: 오전 9시는 09:00, 오후 6시는 18:00"
             )
 
-        with work_right:
-            work_end_input = st.text_input(
-                "근무 종료 *",
-                value=clean_text(editing_record.get("근무종료")),
-                placeholder="예: 1830 → 18:30",
-                key=f"manual_work_end_{nonce}",
-                on_change=normalize_manual_time_field,
-                args=("work_end", nonce),
-                kwargs={"trigger_weather": True},
-            )
+            work_left, work_right = st.columns(2)
 
-        st.caption(
-            "숫자만 입력해도 됩니다. Enter를 누르면 "
-            "2256→22:56, 930→09:30, 18→18:00으로 자동 변환됩니다."
-        )
+            with work_left:
+                work_start_input = st.text_input(
+                    "근무 시작 *",
+                    value=clean_text(editing_record.get("근무시작")),
+                    placeholder="예: 2256 → 22:56",
+                    key=f"manual_work_start_{nonce}",
+                    on_change=normalize_manual_time_field,
+                    args=("work_start", nonce),
+                    kwargs={"trigger_weather": True},
+                )
+
+            with work_right:
+                work_end_input = st.text_input(
+                    "근무 종료 *",
+                    value=clean_text(editing_record.get("근무종료")),
+                    placeholder="예: 1830 → 18:30",
+                    key=f"manual_work_end_{nonce}",
+                    on_change=normalize_manual_time_field,
+                    args=("work_end", nonce),
+                    kwargs={"trigger_weather": True},
+                )
+
+            st.caption(
+                "숫자만 입력해도 됩니다. Enter를 누르면 "
+                "2256→22:56, 930→09:30, 18→18:00으로 자동 변환됩니다."
+            )
+        else:
+            st.caption("부서를 선택하면 근무 인원과 근무시간 입력란이 표시됩니다.")
 
         author = st.text_input(
             "작성자",
@@ -4180,6 +4189,9 @@ def render_form(
         validation_errors.append(
             "근무장소를 입력해 주세요."
         )
+
+    if not team:
+        validation_errors.append("부서를 선택해 주세요.")
 
     if worker_count < 1:
         validation_errors.append("근무자 수를 1명 이상 입력해 주세요.")
