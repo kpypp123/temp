@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.49 · 2026-08-12"
+APP_VERSION = "Professional UI v3.50 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3509,8 +3509,8 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                         1,
                     )
 
-                    # 기존 '4. 휴게 조치 결과' 표는 제거합니다. 제작팀 협의사항은
-                    # 특이사항 입력값이 있을 때만 4번 항목으로 작성합니다.
+                    # 기존 '4. 휴게 조치 결과' 표는 제거합니다. 앱의 특이사항은
+                    # 입력값이 있을 때만 4번 항목으로 작성합니다.
                     result_marker = "4. 휴게 조치 결과"
                     result_index = section_xml.find(result_marker)
                     if result_index >= 0:
@@ -3523,7 +3523,7 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                                 + section_xml[table_end:]
                             )
                         consultation_text = (
-                            "4. 제작팀 협의사항\n  - "
+                            "4. 특이사항\n  - "
                             + html.escape(notes, quote=False)
                             if notes
                             else ""
