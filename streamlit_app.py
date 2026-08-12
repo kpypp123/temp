@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.45 · 2026-08-12"
+APP_VERSION = "Professional UI v3.46 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -2481,6 +2481,29 @@ def set_team(team: str, nonce: int) -> None:
         st.session_state[team_state_key(nonce)] = team
 
 
+def headcount_state_key(kind: str, nonce: int) -> str:
+    return f"headcount_{kind}_{nonce}"
+
+
+def initialize_headcount_state(
+    editing_record: dict[str, Any],
+    nonce: int,
+) -> None:
+    for kind, column in (("employee", "직원"), ("contractor", "도급")):
+        key = headcount_state_key(kind, nonce)
+        if key not in st.session_state:
+            st.session_state[key] = max(
+                0,
+                min(parse_int(editing_record.get(column)), 500),
+            )
+
+
+def adjust_headcount(kind: str, amount: int, nonce: int) -> None:
+    key = headcount_state_key(kind, nonce)
+    current = parse_int(st.session_state.get(key), 0)
+    st.session_state[key] = max(0, min(500, current + amount))
+
+
 def measures_state_key(nonce: int) -> str:
     return f"selected_measures_{nonce}"
 
@@ -3758,6 +3781,7 @@ def render_form(
     initialize_time_state(editing_record, nonce)
     initialize_rest_minutes(editing_record, nonce)
     initialize_team_state(editing_record, nonce)
+    initialize_headcount_state(editing_record, nonce)
     initialize_measures_state(editing_record, nonce)
 
     default_date = datetime.now(KST).date()
@@ -3877,31 +3901,59 @@ def render_form(
         work_end_input = ""
 
         if team:
-            worker_count = st.number_input(
-                "근무자 수 *",
-                min_value=0,
-                max_value=500,
-                value=parse_int(editing_record.get("근무자수")),
-                step=1,
-                key=f"worker_count_{nonce}",
+            employee_count = parse_int(
+                st.session_state.get(headcount_state_key("employee", nonce)),
+                0,
             )
+            contractor_count = parse_int(
+                st.session_state.get(headcount_state_key("contractor", nonce)),
+                0,
+            )
+            worker_count = employee_count + contractor_count
 
-            headcount_options = list(range(0, 501))
-            staff_left, contractor_right = st.columns(2)
-            with staff_left:
-                employee_count = st.selectbox(
-                    "직원 인원",
-                    headcount_options,
-                    index=min(parse_int(editing_record.get("직원")), 500),
-                    key=f"employee_count_{nonce}",
-                )
-            with contractor_right:
-                contractor_count = st.selectbox(
-                    "도급 인원",
-                    headcount_options,
-                    index=min(parse_int(editing_record.get("도급")), 500),
-                    key=f"contractor_count_{nonce}",
-                )
+            total_col, employee_col, contractor_col = st.columns(3)
+            with total_col:
+                st.metric("근무자 수", f"{worker_count}명")
+            with employee_col:
+                st.metric("직원", f"{employee_count}명")
+                employee_minus, employee_plus = st.columns(2)
+                with employee_minus:
+                    st.button(
+                        "−",
+                        key=f"employee_minus_{nonce}",
+                        use_container_width=True,
+                        on_click=adjust_headcount,
+                        args=("employee", -1, nonce),
+                    )
+                with employee_plus:
+                    st.button(
+                        "+",
+                        key=f"employee_plus_{nonce}",
+                        use_container_width=True,
+                        on_click=adjust_headcount,
+                        args=("employee", 1, nonce),
+                    )
+            with contractor_col:
+                st.metric("도급", f"{contractor_count}명")
+                contractor_minus, contractor_plus = st.columns(2)
+                with contractor_minus:
+                    st.button(
+                        "−",
+                        key=f"contractor_minus_{nonce}",
+                        use_container_width=True,
+                        on_click=adjust_headcount,
+                        args=("contractor", -1, nonce),
+                    )
+                with contractor_plus:
+                    st.button(
+                        "+",
+                        key=f"contractor_plus_{nonce}",
+                        use_container_width=True,
+                        on_click=adjust_headcount,
+                        args=("contractor", 1, nonce),
+                    )
+
+            st.caption("직원·도급의 −/+ 버튼으로 조절하면 근무자 수가 자동 계산됩니다.")
 
             st.caption(
                 "근무시간은 24시간 형식으로 입력하세요. "
