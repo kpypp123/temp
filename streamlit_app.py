@@ -3452,6 +3452,20 @@ def set_docx_cell_shading(cell: Any, fill: str) -> None:
     shading.set(qn("w:fill"), fill)
 
 
+def set_docx_table_borders(table: Any, border_value: str = "nil") -> None:
+    table_properties = table._tbl.tblPr
+    borders = table_properties.find(qn("w:tblBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        table_properties.append(borders)
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        border = borders.find(qn(f"w:{edge}"))
+        if border is None:
+            border = OxmlElement(f"w:{edge}")
+            borders.append(border)
+        border.set(qn("w:val"), border_value)
+
+
 def set_docx_cell_margins(cell: Any, top: int = 100, bottom: int = 100) -> None:
     tc_pr = cell._tc.get_or_add_tcPr()
     margins = tc_pr.first_child_found_in("w:tcMar")
@@ -3583,17 +3597,56 @@ def make_heat_report_docx_bytes(records: pd.DataFrame) -> bytes:
     normal.paragraph_format.space_after = Pt(4)
     normal.paragraph_format.line_spacing = 1.15
 
-    title = document.add_paragraph()
+    header_table = document.add_table(rows=1, cols=2)
+    header_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    header_table.autofit = False
+    set_docx_table_borders(header_table, "nil")
+    header_widths = [Inches(4.35), Inches(2.05)]
+    for column, width in enumerate(header_widths):
+        header_table.columns[column].width = width
+        header_table.cell(0, column).width = width
+
+    title_cell = header_table.cell(0, 0)
+    title_cell.text = ""
+    title_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    title = title_cell.paragraphs[0]
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title.paragraph_format.space_after = Pt(2)
-    style_docx_run(title.add_run("폭염작업 조치 결과 보고서"), size=17, bold=True)
-    subtitle = document.add_paragraph()
+    style_docx_run(title.add_run("폭염작업 조치 결과 보고서"), size=16.5, bold=True)
+    subtitle = title_cell.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    subtitle.paragraph_format.space_after = Pt(8)
+    subtitle.paragraph_format.space_before = Pt(0)
+    subtitle.paragraph_format.space_after = Pt(0)
     style_docx_run(
         subtitle.add_run("산업안전보건기준에 관한 규칙 제560조"),
         size=9,
     )
+
+    approval_cell = header_table.cell(0, 1)
+    approval_cell.text = ""
+    approval_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    approval_table = approval_cell.add_table(rows=2, cols=3)
+    approval_table.style = "Table Grid"
+    approval_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    approval_table.autofit = False
+    approval_widths = [Inches(0.38), Inches(0.82), Inches(0.85)]
+    for column, width in enumerate(approval_widths):
+        approval_table.columns[column].width = width
+        for row in approval_table.rows:
+            row.cells[column].width = width
+    approval_label = approval_table.cell(0, 0).merge(approval_table.cell(1, 0))
+    write_docx_cell(approval_label, "결\n재", bold=True, centered=True, size=9.5)
+    write_docx_cell(approval_table.cell(0, 1), "담당", centered=True, size=9)
+    write_docx_cell(approval_table.cell(0, 2), "센터장", centered=True, size=9)
+    write_docx_cell(approval_table.cell(1, 1), "", centered=True, size=9)
+    write_docx_cell(approval_table.cell(1, 2), "", centered=True, size=9)
+    approval_table.rows[1].height = Cm(1.15)
+    for paragraph in list(approval_cell.paragraphs):
+        if not paragraph.text and paragraph._element.getnext() is approval_table._tbl:
+            paragraph._element.getparent().remove(paragraph._element)
+
+    after_header = document.add_paragraph()
+    after_header.paragraph_format.space_after = Pt(1)
 
     add_docx_section_heading(document, "1. 기본 정보")
     info_table = document.add_table(rows=3, cols=4)
@@ -3702,7 +3755,7 @@ def report_attachment_for_rows(records: pd.DataFrame) -> tuple[str, bytes]:
     )
     report_bytes = cached_heat_report_docx_bytes(
         records_json,
-        "worker-count-v2",
+        "approval-box-v3",
     )
     return filename, report_bytes
 
