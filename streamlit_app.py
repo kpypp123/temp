@@ -36,7 +36,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.57 · 2026-08-12"
+APP_VERSION = "Professional UI v3.59 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -148,8 +148,8 @@ SPORT_OPTIONS = [
     "프로야구",
     "KLPGA",
     "KPGA",
-    "기타 (실외)",
-    "기타 (실내)",
+    "기타/ENG(실외)",
+    "기타/ENG(실내)",
 ]
 
 SPORT_COMMON_MEASURES = {
@@ -177,7 +177,7 @@ SPORT_COMMON_MEASURES = {
         "- 이상 증상 발생 시 10~15분간 냉방 공간에서 휴식하도록\n"
         "  제작팀과 사전 협의"
     ),
-    "기타 (실내)": (
+    "기타/ENG(실내)": (
         "- 중계차, 휴게실, 체육관 냉방 가동\n"
         "  (냉방 공간 체감온도 27℃ 이하 유지)\n"
         "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 음료 지급\n"
@@ -187,7 +187,7 @@ SPORT_COMMON_MEASURES = {
         "- 케이블 설치 등 외부 작업 완료\n"
         "  1시간 이내 10분 이상 휴게시간 부여"
     ),
-    "기타 (실외)": (
+    "기타/ENG(실외)": (
         "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 음료 지급\n"
         "- 폭염 시간대 불필요한 외부 활동 최소화\n"
         "- 중계차, 체육관 냉방 가동 공간에서 근무, 폭염 작업 해당 없음\n"
@@ -2653,7 +2653,7 @@ def infer_sport(site_name: Any) -> str:
         or any(keyword in site for keyword in ("골프", "CC", "cc", "컨트리클럽"))
     ):
         return "KPGA"
-    return "기타 (실내)"
+    return "기타/ENG(실내)"
 
 
 def normalize_sport(value: Any, site_name: Any = "") -> str:
@@ -2662,10 +2662,12 @@ def normalize_sport(value: Any, site_name: Any = "") -> str:
         "야구": "프로야구",
         "남자골프": "KPGA",
         "여자골프": "KLPGA",
-        "기타스포츠(실외)": "기타 (실외)",
-        "기타스포츠(실내)": "기타 (실내)",
-        "기타스포츠": "기타 (실내)",
-        "기타": "기타 (실내)",
+        "기타스포츠(실외)": "기타/ENG(실외)",
+        "기타스포츠(실내)": "기타/ENG(실내)",
+        "기타스포츠": "기타/ENG(실내)",
+        "기타": "기타/ENG(실내)",
+        "기타 (실외)": "기타/ENG(실외)",
+        "기타 (실내)": "기타/ENG(실내)",
     }
     if sport in legacy_map:
         return legacy_map[sport]
@@ -2680,7 +2682,7 @@ def common_measures_for_sport(sport: Any) -> str:
     normalized = normalize_sport(sport)
     return SPORT_COMMON_MEASURES.get(
         normalized,
-        SPORT_COMMON_MEASURES["기타 (실내)"],
+        SPORT_COMMON_MEASURES["기타/ENG(실내)"],
     )
 
 
@@ -2695,8 +2697,8 @@ def strip_legacy_common_measures(sport: Any, value: Any) -> str:
         "프로야구": "야구",
         "KPGA": "남자골프",
         "KLPGA": "여자골프",
-        "기타 (실외)": "기타스포츠(실외)",
-        "기타 (실내)": "기타스포츠(실내)",
+        "기타/ENG(실외)": "기타스포츠(실외)",
+        "기타/ENG(실내)": "기타스포츠(실내)",
     }.get(normalized_sport, normalized_sport)
     legacy = LEGACY_COMMON_MEASURES.get(legacy_key, "")
     legacy_parts = {
@@ -3422,6 +3424,20 @@ def report_team_supervisor(records: pd.DataFrame, team: str) -> str:
     return f"{department} : {' / '.join(supervisors) if supervisors else '-'}"
 
 
+def report_team_worker_count(records: pd.DataFrame, team: str) -> str:
+    aliases = {team, team.removesuffix("팀")}
+    team_rows = records[records["팀"].isin(aliases)]
+    department = team.removesuffix("팀")
+    if team_rows.empty:
+        return f"{department} -"
+
+    employees = sum(parse_int(value) for value in team_rows["직원"].tolist())
+    contractors = sum(parse_int(value) for value in team_rows["도급"].tolist())
+    saved_totals = sum(parse_int(value) for value in team_rows["근무자수"].tolist())
+    total = saved_totals or (employees + contractors)
+    return f"{department} 총 {total}명 (직원 {employees}명 / 도급 {contractors}명)"
+
+
 def replace_report_text(xml_text: str, old: str, new: str) -> str:
     return xml_text.replace(old, html.escape(new, quote=False), 1)
 
@@ -3542,6 +3558,10 @@ def make_heat_report_docx_bytes(records: pd.DataFrame) -> bytes:
         report_team_supervisor(records, f"{department}팀")
         for department in departments
     ) or "-"
+    worker_counts = "\n".join(
+        report_team_worker_count(records, f"{department}팀")
+        for department in departments
+    ) or "-"
     notes = " / ".join(unique_texts(records["특이사항"].tolist()))
 
     document = Document()
@@ -3575,7 +3595,7 @@ def make_heat_report_docx_bytes(records: pd.DataFrame) -> bytes:
     )
 
     add_docx_section_heading(document, "1. 기본 정보")
-    info_table = document.add_table(rows=2, cols=4)
+    info_table = document.add_table(rows=3, cols=4)
     info_table.style = "Table Grid"
     info_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     info_table.autofit = False
@@ -3588,6 +3608,10 @@ def make_heat_report_docx_bytes(records: pd.DataFrame) -> bytes:
         set_docx_cell_shading(info_table.cell(0, column), "E8EEF5")
         write_docx_cell(info_table.cell(0, column), headers[column], bold=True, centered=True)
         write_docx_cell(info_table.cell(1, column), values[column], centered=True)
+    worker_value_cell = info_table.cell(2, 1).merge(info_table.cell(2, 3))
+    set_docx_cell_shading(info_table.cell(2, 0), "E8EEF5")
+    write_docx_cell(info_table.cell(2, 0), "근무인원", bold=True, centered=True)
+    write_docx_cell(worker_value_cell, worker_counts, centered=True)
 
     add_docx_section_heading(document, "2. 폭염작업 현황")
     heat_table = document.add_table(rows=2, cols=2)
@@ -3762,7 +3786,7 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
     notes = " / ".join(unique_texts(records["특이사항"].tolist()))
 
     replacements = [
-        ("기타 (실내) / SBS프리즘타워", site_text),
+        ("기타/ENG(실내) / SBS프리즘타워", site_text),
         ("야구 / 삼성야구장", site_text),
         ("종목 / 장소명", site_text),
         ("2026.08.12", work_date_text),
