@@ -4739,7 +4739,7 @@ def render_form(
             ),
             placeholder=(
                 "예: 설치·철수 시간 조정, "
-                "제작팀 협의사항 기재"
+                "제작팀 협의사항, 온열질환 환자 발생 및 조치 내용"
             ),
             height=120,
             key=f"notes_{nonce}",
