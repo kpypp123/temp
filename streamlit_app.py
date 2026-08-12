@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.31 · 2026-08-12"
+APP_VERSION = "Professional UI v3.32 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -113,7 +113,13 @@ LEGACY_COLUMNS = [
 
 TEAM_OPTIONS = ["중계팀", "영상팀"]
 
-SPORT_OPTIONS = ["야구", "남자골프", "여자골프", "기타스포츠(실내)"]
+SPORT_OPTIONS = [
+    "야구",
+    "남자골프",
+    "여자골프",
+    "기타스포츠(실내)",
+    "기타스포츠(실외)",
+]
 
 SPORT_COMMON_MEASURES = {
     "남자골프": (
@@ -150,6 +156,12 @@ SPORT_COMMON_MEASURES = {
         "- 케이블 설치 등 외부 작업 완료\n"
         "  1시간 이내 10분 이상 휴게시간 부여"
     ),
+    "기타스포츠(실외)": (
+        "- 식염포도당, 폭염질환 응급키트 위치 공유 및 생수, 음료 지급\n"
+        "- 폭염 시간대 불필요한 외부 활동 최소화\n"
+        "- 중계차, 체육관 냉방 가동 공간에서 근무, 폭염 작업 해당 없음\n"
+        "- 케이블 설치 등 외부 작업 완료 1시간 이내 10분 이상 휴게시간 부여"
+    ),
 }
 
 # v3.16에서 조치사항에 함께 저장했던 기존 공통 문구.
@@ -179,11 +191,16 @@ LEGACY_COMMON_MEASURES = {
         "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
         "폭염시간대 업무강도 조정"
     ),
+    "기타스포츠(실외)": (
+        "생수·냉수 비치 | 그늘·냉방 휴게공간 확인 | "
+        "폭염시간대 업무강도 조정"
+    ),
 }
 
 MEASURE_OPTIONS = [
-    "1시간 이내 10분 이상 휴식",
     "2시간 이내 20분 이상 휴식",
+    "이동 간 휴식",
+    "대기 휴식",
 ]
 
 TIME_FIELD_COLUMNS = {
@@ -2382,13 +2399,6 @@ def toggle_measure(measure: str, nonce: int) -> None:
     if measure in current:
         current.remove(measure)
     else:
-        # 10분/20분 휴식 기준은 동시에 선택하지 않도록 합니다.
-        if measure in MEASURE_OPTIONS[:2]:
-            current = [
-                option
-                for option in current
-                if option not in MEASURE_OPTIONS[:2]
-            ]
         current.append(measure)
 
     # 화면/저장 순서는 MEASURE_OPTIONS 순서로 고정
@@ -3034,6 +3044,23 @@ def selected_measures(value: Any) -> list[str]:
         for part in parts
         if part in MEASURE_OPTIONS
     ]
+
+
+def custom_measure_text(value: Any) -> str:
+    """Return saved action text that is not represented by a choice button."""
+    text = clean_text(value)
+
+    if not text:
+        return ""
+
+    parts = [
+        part.strip()
+        for part in re.split(r"\s*\|\s*|,\s*", text)
+        if part.strip()
+    ]
+    return " | ".join(
+        part for part in parts if part not in MEASURE_OPTIONS
+    )
 
 
 def make_csv_bytes(dataframe: pd.DataFrame) -> bytes:
@@ -3734,45 +3761,39 @@ def render_form(
             )
         )
 
-        measure_labels = {
-            "1시간 이내 10분 이상 휴식": "1시간 이내 10분 이상 휴식",
-            "2시간 이내 20분 이상 휴식": "2시간 이내 20분 이상 휴식",
-        }
-
-        measure_left, measure_right = st.columns(2)
-        with measure_left:
-            st.button(
-                measure_labels[MEASURE_OPTIONS[0]],
-                key=f"measure_0_{nonce}",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if MEASURE_OPTIONS[0] in selected_measure_list
-                    else "secondary"
-                ),
-                on_click=toggle_measure,
-                args=(MEASURE_OPTIONS[0], nonce),
-            )
-
-        with measure_right:
-            st.button(
-                measure_labels[MEASURE_OPTIONS[1]],
-                key=f"measure_1_{nonce}",
-                use_container_width=True,
-                type=(
-                    "primary"
-                    if MEASURE_OPTIONS[1] in selected_measure_list
-                    else "secondary"
-                ),
-                on_click=toggle_measure,
-                args=(MEASURE_OPTIONS[1], nonce),
-            )
+        measure_columns = st.columns(3)
+        for index, (column, measure) in enumerate(
+            zip(measure_columns, MEASURE_OPTIONS)
+        ):
+            with column:
+                st.button(
+                    measure,
+                    key=f"measure_{index}_{nonce}",
+                    use_container_width=True,
+                    type=(
+                        "primary"
+                        if measure in selected_measure_list
+                        else "secondary"
+                    ),
+                    on_click=toggle_measure,
+                    args=(measure, nonce),
+                )
 
         measures = list(
             st.session_state.get(
                 measures_state_key(nonce),
                 [],
             )
+        )
+
+        other_measure = st.text_area(
+            "그 외 조치사항",
+            value=custom_measure_text(
+                editing_record.get("조치사항")
+            ),
+            placeholder="예: 냉음료 추가 지급, 작업 순서 조정",
+            height=90,
+            key=f"other_measure_{nonce}",
         )
 
         notes = st.text_area(
@@ -3821,13 +3842,15 @@ def render_form(
     work_end_text = format_time_value(work_end)
     heat_start_text = format_time_value(heat_start)
     heat_end_text = format_time_value(heat_end)
-    # 선택한 휴식 조치가 Google Sheets의 휴게시간 열에도 저장됩니다.
-    if MEASURE_OPTIONS[0] in measures:
-        rest_minutes = 10
-    elif MEASURE_OPTIONS[1] in measures:
-        rest_minutes = 20
-    else:
-        rest_minutes = 0
+    # 분 단위가 명시된 휴식 조치만 Sheets의 휴게시간 열에 자동 반영합니다.
+    rest_minutes = (
+        20
+        if "2시간 이내 20분 이상 휴식" in measures
+        else 0
+    )
+    saved_measures = list(measures)
+    if other_measure.strip():
+        saved_measures.append(other_measure.strip())
 
     validation_errors: list[str] = []
 
@@ -3884,7 +3907,7 @@ def render_form(
         "체감온도": normalized_temperature,
         "휴게시간": str(rest_minutes),
         "공통 조치사항": common_measures,
-        "조치사항": " | ".join(measures),
+        "조치사항": " | ".join(saved_measures),
         "특이사항": notes.strip(),
         "등록시간": created_at,
         "수정시간": now_text,
@@ -4210,8 +4233,13 @@ def render_records(
                 f"{clean_text(record.get('폭염종료')) or '-'}"
             )
             measure_text = clean_text(record.get("조치사항"))
-            has_10_minute_rest = MEASURE_OPTIONS[0] in measure_text
-            has_20_minute_rest = MEASURE_OPTIONS[1] in measure_text
+            # 기존 10분 휴식 기록도 조회 화면에서는 계속 표시합니다.
+            has_10_minute_rest = (
+                "1시간 이내 10분 이상 휴식" in measure_text
+            )
+            has_20_minute_rest = (
+                "2시간 이내 20분 이상 휴식" in measure_text
+            )
             if has_10_minute_rest and has_20_minute_rest:
                 rest_action_text = "10분·20분 휴식조치"
             elif has_10_minute_rest:
