@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.38 · 2026-08-12"
+APP_VERSION = "Professional UI v3.39 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -351,7 +351,7 @@ st.markdown(
 
     .app-title {
         color: var(--ink);
-        font-size: clamp(1.35rem, 3.2vw, 1.75rem);
+        font-size: clamp(1.35rem, 3.2vw, 1.75rem) !important;
         font-weight: 760;
         letter-spacing: -0.035em;
         line-height: 1.2;
@@ -655,7 +655,7 @@ st.markdown(
         }
 
         .app-title {
-            font-size: clamp(0.78rem, 3.9vw, 1.08rem);
+            font-size: clamp(0.78rem, 3.9vw, 1.08rem) !important;
             letter-spacing: -0.055em;
             max-width: 100%;
             white-space: nowrap;
