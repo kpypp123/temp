@@ -8,6 +8,7 @@ import io
 import logging
 import math
 import re
+import smtplib
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -16,6 +17,7 @@ import time as time_module
 import zipfile
 from pathlib import Path
 from datetime import date, datetime, time, timedelta
+from email.message import EmailMessage
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -3647,6 +3649,62 @@ def make_heat_report_docx_bytes(records: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
+@st.cache_data(show_spinner=False, ttl=86400)
+def cached_heat_report_docx_bytes(records_json: str) -> bytes:
+    """같은 기록의 Word 보고서를 24시간 캐시해 재생성을 줄입니다."""
+    records = pd.read_json(io.StringIO(records_json), orient="records")
+    return make_heat_report_docx_bytes(records)
+
+
+def mail_secret(name: str, section_name: str) -> str:
+    return get_secret((name,)) or get_secret(("mail", section_name))
+
+
+def report_mail_recipients() -> list[str]:
+    raw = mail_secret("MAIL_RECIPIENTS", "recipients")
+    return [
+        item.strip()
+        for item in re.split(r"[,;\n]+", raw)
+        if item.strip()
+    ]
+
+
+def send_report_email(
+    report_date: str,
+    site: str,
+    filename: str,
+    report_bytes: bytes,
+) -> int:
+    sender = mail_secret("MAIL_SENDER", "sender")
+    password = mail_secret("MAIL_APP_PASSWORD", "app_password").replace(" ", "")
+    recipients = report_mail_recipients()
+    if not sender or not password or not recipients:
+        raise RuntimeError(
+            "Streamlit Secrets에 메일 발송 정보가 등록되지 않았습니다."
+        )
+
+    message = EmailMessage()
+    message["Subject"] = f"[CheckTemp] {report_date} {site} 폭염작업 조치 결과 보고서"
+    message["From"] = sender
+    message["To"] = sender
+    message["Bcc"] = ", ".join(recipients)
+    message.set_content(
+        f"{report_date} {site} 근무 기록으로 작성한 보고서입니다.\n\n"
+        "첨부된 Word 보고서를 확인해 주세요.\n\n"
+        "이 메일은 CheckTemp에서 발송되었습니다."
+    )
+    message.add_attachment(
+        report_bytes,
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=filename,
+    )
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+        smtp.login(sender, password)
+        smtp.send_message(message)
+    return len(recipients)
+
+
 def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
     """같은 날짜·현장의 기록을 원본 HWPX 양식에 채웁니다."""
     if records.empty:
@@ -4993,7 +5051,12 @@ def render_records(
     ]
 
     try:
-        report_bytes = make_heat_report_docx_bytes(report_rows)
+        records_json = report_rows.to_json(
+            orient="records",
+            force_ascii=False,
+            date_format="iso",
+        )
+        report_bytes = cached_heat_report_docx_bytes(records_json)
         safe_site_name = re.sub(
             r"[^0-9A-Za-z가-힣_-]+",
             "_",
@@ -5002,19 +5065,46 @@ def render_records(
         report_date_name = clean_text(
             selected_report["작업날짜"]
         ).replace("-", "")
-        st.download_button(
-            "Word 보고서(DOCX) 다운로드",
-            data=report_bytes,
-            file_name=(
-                f"폭염작업_조치_결과_보고서_"
-                f"{report_date_name}_{safe_site_name}.docx"
-            ),
-            mime=(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ),
-            use_container_width=True,
-            key="download_heat_report",
+        report_filename = (
+            f"폭염작업_조치_결과_보고서_"
+            f"{report_date_name}_{safe_site_name}.docx"
         )
+        st.caption(
+            "생성된 Word 보고서는 24시간 캐시에 보관되어 "
+            "다운로드와 재전송에 바로 사용됩니다."
+        )
+        download_report_col, send_report_col = st.columns(2)
+        with download_report_col:
+            st.download_button(
+                "Word 보고서 다운로드",
+                data=report_bytes,
+                file_name=report_filename,
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+                use_container_width=True,
+                key="download_heat_report",
+            )
+        with send_report_col:
+            if st.button(
+                "보고서 메일 발송",
+                use_container_width=True,
+                key="send_heat_report_email",
+            ):
+                try:
+                    with st.spinner("보고서를 메일로 발송하고 있습니다..."):
+                        recipient_count = send_report_email(
+                            clean_text(selected_report["작업날짜"]),
+                            clean_text(selected_report["현장명"]),
+                            report_filename,
+                            report_bytes,
+                        )
+                    st.success(
+                        f"보고서를 수신자 {recipient_count}명에게 발송했습니다."
+                    )
+                except Exception as mail_exc:  # noqa: BLE001
+                    st.error(f"메일 발송에 실패했습니다: {mail_exc}")
     except Exception as exc:  # noqa: BLE001
         st.warning(f"보고서를 만들 수 없습니다: {exc}")
 
