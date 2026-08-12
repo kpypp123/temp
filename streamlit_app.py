@@ -22,13 +22,19 @@ from zoneinfo import ZoneInfo
 import gspread
 import pandas as pd
 import streamlit as st
+from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Cm, Inches, Pt, RGBColor
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.52 · 2026-08-12"
+APP_VERSION = "Professional UI v3.53 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3416,6 +3422,222 @@ def replace_report_text(xml_text: str, old: str, new: str) -> str:
     return xml_text.replace(old, html.escape(new, quote=False), 1)
 
 
+def set_docx_cell_shading(cell: Any, fill: str) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shading = tc_pr.find(qn("w:shd"))
+    if shading is None:
+        shading = OxmlElement("w:shd")
+        tc_pr.append(shading)
+    shading.set(qn("w:fill"), fill)
+
+
+def set_docx_cell_margins(cell: Any, top: int = 100, bottom: int = 100) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    margins = tc_pr.first_child_found_in("w:tcMar")
+    if margins is None:
+        margins = OxmlElement("w:tcMar")
+        tc_pr.append(margins)
+    for side, value in (("top", top), ("bottom", bottom), ("start", 120), ("end", 120)):
+        node = margins.find(qn(f"w:{side}"))
+        if node is None:
+            node = OxmlElement(f"w:{side}")
+            margins.append(node)
+        node.set(qn("w:w"), str(value))
+        node.set(qn("w:type"), "dxa")
+
+
+def style_docx_run(run: Any, size: float = 10, bold: bool = False) -> None:
+    run.font.name = "맑은 고딕"
+    run._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), "맑은 고딕")
+    run.font.size = Pt(size)
+    run.bold = bold
+    run.font.color.rgb = RGBColor(0, 0, 0)
+
+
+def write_docx_cell(
+    cell: Any,
+    text: str,
+    *,
+    bold: bool = False,
+    centered: bool = False,
+    size: float = 9.5,
+) -> None:
+    cell.text = ""
+    lines = text.splitlines() or [""]
+    for index, line in enumerate(lines):
+        paragraph = cell.paragraphs[0] if index == 0 else cell.add_paragraph()
+        paragraph.alignment = (
+            WD_ALIGN_PARAGRAPH.CENTER if centered else WD_ALIGN_PARAGRAPH.LEFT
+        )
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(2)
+        paragraph.paragraph_format.line_spacing = 1.15
+        style_docx_run(paragraph.add_run(line), size=size, bold=bold)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    set_docx_cell_margins(cell)
+
+
+def add_docx_section_heading(document: Any, text: str) -> None:
+    paragraph = document.add_paragraph()
+    paragraph.paragraph_format.space_before = Pt(9)
+    paragraph.paragraph_format.space_after = Pt(5)
+    paragraph.paragraph_format.keep_with_next = True
+    style_docx_run(paragraph.add_run(text), size=11, bold=True)
+
+
+def make_heat_report_docx_bytes(records: pd.DataFrame) -> bytes:
+    """같은 날짜·현장의 기록을 줄 겹침 없는 Word 보고서로 생성합니다."""
+    if records.empty:
+        raise ValueError("보고서로 만들 기록이 없습니다.")
+
+    first = records.iloc[0]
+    work_date = clean_text(first.get("작업날짜"))
+    try:
+        work_date_text = datetime.strptime(work_date, "%Y-%m-%d").strftime("%Y.%m.%d")
+    except ValueError:
+        work_date_text = work_date.replace("-", ".")
+    site = clean_text(first.get("현장명")) or "근무장소 미입력"
+    sport = normalize_sport(first.get("종목"), site)
+
+    heat_starts = sorted(unique_texts(records["폭염시작"].tolist()))
+    heat_ends = sorted(unique_texts(records["폭염종료"].tolist()))
+    heat_time = (
+        f"{heat_starts[0]}~{heat_ends[-1]}"
+        if heat_starts and heat_ends
+        else "해당 없음"
+    )
+    temperatures: list[float] = []
+    for value in records["체감온도"].tolist():
+        temperatures.extend(temperature_numbers(value))
+    if temperatures:
+        low = format_number(min(temperatures))
+        high = format_number(max(temperatures))
+        temperature_text = f"{low}℃" if low == high else f"{low}℃~{high}℃"
+    else:
+        temperature_text = "미기록"
+
+    departments = [
+        department
+        for department in TEAM_OPTIONS
+        if not records[
+            records["팀"].isin({department, f"{department}팀"})
+        ].empty
+    ]
+    work_times = "\n".join(
+        report_team_work_time(records, f"{department}팀")
+        for department in departments
+    ) or "-"
+    authors = "\n".join(
+        report_team_supervisor(records, f"{department}팀")
+        for department in departments
+    ) or "-"
+    notes = " / ".join(unique_texts(records["특이사항"].tolist()))
+
+    document = Document()
+    section = document.sections[0]
+    section.page_width = Cm(21.0)
+    section.page_height = Cm(29.7)
+    section.top_margin = Cm(1.45)
+    section.bottom_margin = Cm(1.35)
+    section.left_margin = Cm(1.55)
+    section.right_margin = Cm(1.55)
+    section.header_distance = Cm(0.8)
+    section.footer_distance = Cm(0.8)
+
+    normal = document.styles["Normal"]
+    normal.font.name = "맑은 고딕"
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "맑은 고딕")
+    normal.font.size = Pt(10)
+    normal.paragraph_format.space_after = Pt(4)
+    normal.paragraph_format.line_spacing = 1.15
+
+    title = document.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title.paragraph_format.space_after = Pt(2)
+    style_docx_run(title.add_run("폭염작업 조치 결과 보고서"), size=17, bold=True)
+    subtitle = document.add_paragraph()
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    subtitle.paragraph_format.space_after = Pt(8)
+    style_docx_run(
+        subtitle.add_run("산업안전보건기준에 관한 규칙 제560조"),
+        size=9,
+    )
+
+    add_docx_section_heading(document, "1. 기본 정보")
+    info_table = document.add_table(rows=2, cols=4)
+    info_table.style = "Table Grid"
+    info_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    info_table.autofit = False
+    widths = [Inches(1.75), Inches(1.05), Inches(1.85), Inches(1.45)]
+    headers = ["업무내용 / 장소", "근무일자", "근무시간", "작성자"]
+    values = [f"{sport} / {site}", work_date_text, work_times, authors]
+    for column, width in enumerate(widths):
+        for row in info_table.rows:
+            row.cells[column].width = width
+        set_docx_cell_shading(info_table.cell(0, column), "E8EEF5")
+        write_docx_cell(info_table.cell(0, column), headers[column], bold=True, centered=True)
+        write_docx_cell(info_table.cell(1, column), values[column], centered=True)
+
+    add_docx_section_heading(document, "2. 폭염작업 현황")
+    heat_table = document.add_table(rows=2, cols=2)
+    heat_table.style = "Table Grid"
+    heat_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    heat_table.autofit = False
+    for column, (header, value) in enumerate(
+        (("폭염시간대", heat_time), ("체감온도", temperature_text))
+    ):
+        for row in heat_table.rows:
+            row.cells[column].width = Inches(3.05)
+        set_docx_cell_shading(heat_table.cell(0, column), "E8EEF5")
+        write_docx_cell(heat_table.cell(0, column), header, bold=True, centered=True)
+        write_docx_cell(heat_table.cell(1, column), value, centered=True)
+    source_note = document.add_paragraph()
+    source_note.paragraph_format.space_before = Pt(3)
+    source_note.paragraph_format.space_after = Pt(2)
+    style_docx_run(
+        source_note.add_run("※ 기상청 날씨누리 시간대별 예보 기준"),
+        size=8.5,
+    )
+
+    add_docx_section_heading(document, "3. 폭염 대응 조치")
+    measure_table = document.add_table(rows=max(1, len(departments)), cols=2)
+    measure_table.style = "Table Grid"
+    measure_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    measure_table.autofit = False
+    active_departments = departments or ["중계"]
+    for row_index, department in enumerate(active_departments):
+        label = f"{department}팀" if department != "기타" else "기타"
+        measure_text = report_team_table_text(records, department)
+        measure_table.rows[row_index].cells[0].width = Inches(1.15)
+        measure_table.rows[row_index].cells[1].width = Inches(4.95)
+        set_docx_cell_shading(measure_table.cell(row_index, 0), "E8EEF5")
+        write_docx_cell(
+            measure_table.cell(row_index, 0),
+            label,
+            bold=True,
+            centered=True,
+        )
+        write_docx_cell(measure_table.cell(row_index, 1), measure_text, size=9.3)
+
+    if notes:
+        add_docx_section_heading(document, "4. 특이사항")
+        notes_paragraph = document.add_paragraph()
+        notes_paragraph.paragraph_format.left_indent = Cm(0.35)
+        notes_paragraph.paragraph_format.space_after = Pt(4)
+        style_docx_run(notes_paragraph.add_run(notes), size=9.5)
+
+    footer = section.footer.paragraphs[0]
+    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    style_docx_run(
+        footer.add_run("㈜후니드 TM사업부문 미디어제작센터"),
+        size=8.5,
+    )
+
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
 def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
     """같은 날짜·현장의 기록을 원본 HWPX 양식에 채웁니다."""
     if records.empty:
@@ -4737,7 +4959,7 @@ def render_records(
     st.markdown("### 폭염 보고서 다운로드")
     st.caption(
         "같은 근무일자와 근무장소의 부서별 기록을 "
-        "한글 HWPX 보고서 한 장으로 묶습니다."
+        "Word DOCX 보고서 한 장으로 묶습니다."
     )
 
     report_candidates = (
@@ -4762,7 +4984,7 @@ def render_records(
     ]
 
     try:
-        report_bytes = make_heat_report_bytes(report_rows)
+        report_bytes = make_heat_report_docx_bytes(report_rows)
         safe_site_name = re.sub(
             r"[^0-9A-Za-z가-힣_-]+",
             "_",
@@ -4772,14 +4994,14 @@ def render_records(
             selected_report["작업날짜"]
         ).replace("-", "")
         st.download_button(
-            "한글 보고서(HWPX) 다운로드",
+            "Word 보고서(DOCX) 다운로드",
             data=report_bytes,
             file_name=(
                 f"폭염작업_조치_결과_보고서_"
-                f"{report_date_name}_{safe_site_name}.hwpx"
+                f"{report_date_name}_{safe_site_name}.docx"
             ),
             mime=(
-                "application/vnd.hancom.hwpx"
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             ),
             use_container_width=True,
             key="download_heat_report",
