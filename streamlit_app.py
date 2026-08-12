@@ -15,6 +15,7 @@ import urllib.error
 import uuid
 import time as time_module
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
 from datetime import date, datetime, time, timedelta
 from email.message import EmailMessage
@@ -3684,8 +3685,32 @@ def cached_heat_report_docx_bytes(
     return make_heat_report_docx_bytes(records)
 
 
+def find_nested_secret(container: Any, names: set[str]) -> str:
+    """TOML의 어느 섹션에 들어가도 지정된 메일 키를 찾아 반환합니다."""
+    if not isinstance(container, Mapping):
+        return ""
+    for key, value in container.items():
+        if str(key).lower() in names and not isinstance(value, Mapping):
+            return clean_text(value)
+    for value in container.values():
+        found = find_nested_secret(value, names)
+        if found:
+            return found
+    return ""
+
+
 def mail_secret(name: str, section_name: str) -> str:
-    return get_secret((name,)) or get_secret(("mail", section_name))
+    direct = get_secret((name,)) or get_secret(("mail", section_name))
+    if direct:
+        return direct
+    try:
+        secrets_tree: Any = st.secrets.to_dict()
+    except Exception:  # noqa: BLE001
+        secrets_tree = st.secrets
+    return find_nested_secret(
+        secrets_tree,
+        {name.lower(), section_name.lower()},
+    )
 
 
 def report_mail_recipients() -> list[str]:
@@ -3707,8 +3732,16 @@ def send_report_email(
     password = mail_secret("MAIL_APP_PASSWORD", "app_password").replace(" ", "")
     recipients = report_mail_recipients()
     if not sender or not password or not recipients:
+        missing = []
+        if not sender:
+            missing.append("MAIL_SENDER")
+        if not password:
+            missing.append("MAIL_APP_PASSWORD")
+        if not recipients:
+            missing.append("MAIL_RECIPIENTS")
         raise RuntimeError(
-            "Streamlit Secrets에 메일 발송 정보가 등록되지 않았습니다."
+            "Streamlit Secrets에서 다음 항목을 찾지 못했습니다: "
+            + ", ".join(missing)
         )
 
     message = EmailMessage()
