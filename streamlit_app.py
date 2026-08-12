@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.50 · 2026-08-12"
+APP_VERSION = "Professional UI v3.51 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3497,8 +3497,6 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                         quote=False,
                     )
                     schedule_replacement = (
-                        "<hp:t>  - 1시간 이내 10분 이상 휴식</hp:t>"
-                        "<hp:lineBreak/>"
                         "<hp:t> 2) 부서별 시행 조치</hp:t>"
                         "<hp:lineBreak/>"
                         f"<hp:t>{department_measures}</hp:t>"
@@ -3508,6 +3506,38 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                         schedule_replacement,
                         1,
                     )
+
+                    # 한글 보고서에서는 공통 예방조치 제목과 내용을 제외합니다.
+                    # 앱과 스프레드시트에 저장된 공통 조치 데이터는 유지됩니다.
+                    common_heading_index = section_xml.find(
+                        "<hp:t> 1) 공통 예방조치</hp:t>"
+                    )
+                    department_heading_index = section_xml.find(
+                        "<hp:t> 2) 부서별 시행 조치</hp:t>"
+                    )
+                    if (
+                        common_heading_index >= 0
+                        and department_heading_index > common_heading_index
+                    ):
+                        common_paragraph_start = section_xml.rfind(
+                            "<hp:p",
+                            0,
+                            common_heading_index,
+                        )
+                        department_paragraph_start = section_xml.rfind(
+                            "<hp:p",
+                            0,
+                            department_heading_index,
+                        )
+                        if (
+                            common_paragraph_start >= 0
+                            and department_paragraph_start
+                            > common_paragraph_start
+                        ):
+                            section_xml = (
+                                section_xml[:common_paragraph_start]
+                                + section_xml[department_paragraph_start:]
+                            )
 
                     # 기존 '4. 휴게 조치 결과' 표는 제거합니다. 앱의 특이사항은
                     # 입력값이 있을 때만 4번 항목으로 작성합니다.
