@@ -3685,6 +3685,28 @@ def cached_heat_report_docx_bytes(
     return make_heat_report_docx_bytes(records)
 
 
+def report_attachment_for_rows(records: pd.DataFrame) -> tuple[str, bytes]:
+    if records.empty:
+        raise ValueError("보고서로 만들 기록이 없습니다.")
+    work_date = clean_text(records.iloc[0].get("작업날짜"))
+    site = clean_text(records.iloc[0].get("현장명"))
+    safe_site = re.sub(r"[^0-9A-Za-z가-힣_-]+", "_", site).strip("_") or "현장"
+    filename = (
+        "폭염작업_조치_결과_보고서_"
+        f"{work_date.replace('-', '')}_{safe_site}.docx"
+    )
+    records_json = records.to_json(
+        orient="records",
+        force_ascii=False,
+        date_format="iso",
+    )
+    report_bytes = cached_heat_report_docx_bytes(
+        records_json,
+        "worker-count-v2",
+    )
+    return filename, report_bytes
+
+
 def find_nested_secret(container: Any, names: set[str]) -> str:
     """TOML의 어느 섹션에 들어가도 지정된 메일 키를 찾아 반환합니다."""
     if not isinstance(container, Mapping):
@@ -3722,11 +3744,10 @@ def report_mail_recipients() -> list[str]:
     ]
 
 
-def send_report_email(
+def send_report_attachments_email(
     report_date: str,
-    site: str,
-    filename: str,
-    report_bytes: bytes,
+    scope: str,
+    attachments: list[tuple[str, bytes]],
 ) -> int:
     sender = mail_secret("MAIL_SENDER", "sender")
     password = mail_secret("MAIL_APP_PASSWORD", "app_password").replace(" ", "")
@@ -3745,25 +3766,44 @@ def send_report_email(
         )
 
     message = EmailMessage()
-    message["Subject"] = f"[CheckTemp] {report_date} {site} 폭염작업 조치 결과 보고서"
+    if not attachments:
+        raise RuntimeError("메일에 첨부할 보고서가 없습니다.")
+    if sum(len(payload) for _, payload in attachments) > 20 * 1024 * 1024:
+        raise RuntimeError("첨부파일 합계가 20MB를 넘어 날짜를 나누어 발송해 주세요.")
+
+    message["Subject"] = f"[CheckTemp] {report_date} {scope} 폭염작업 조치 결과 보고서"
     message["From"] = sender
     message["To"] = sender
     message["Bcc"] = ", ".join(recipients)
     message.set_content(
-        f"{report_date} {site} 근무 기록으로 작성한 보고서입니다.\n\n"
-        "첨부된 Word 보고서를 확인해 주세요.\n\n"
+        f"{report_date} {scope} 근무 기록으로 작성한 보고서입니다.\n\n"
+        f"첨부된 Word 보고서 {len(attachments)}개를 확인해 주세요.\n\n"
         "이 메일은 CheckTemp에서 발송되었습니다."
     )
-    message.add_attachment(
-        report_bytes,
-        maintype="application",
-        subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=filename,
-    )
+    for filename, report_bytes in attachments:
+        message.add_attachment(
+            report_bytes,
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=filename,
+        )
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
         smtp.login(sender, password)
         smtp.send_message(message)
     return len(recipients)
+
+
+def send_report_email(
+    report_date: str,
+    site: str,
+    filename: str,
+    report_bytes: bytes,
+) -> int:
+    return send_report_attachments_email(
+        report_date,
+        site,
+        [(filename, report_bytes)],
+    )
 
 
 def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
@@ -5112,47 +5152,26 @@ def render_records(
     ]
 
     try:
-        records_json = report_rows.to_json(
-            orient="records",
-            force_ascii=False,
-            date_format="iso",
-        )
-        report_bytes = cached_heat_report_docx_bytes(
-            records_json,
-            "worker-count-v2",
-        )
-        safe_site_name = re.sub(
-            r"[^0-9A-Za-z가-힣_-]+",
-            "_",
-            clean_text(selected_report["현장명"]),
-        ).strip("_") or "현장"
-        report_date_name = clean_text(
-            selected_report["작업날짜"]
-        ).replace("-", "")
-        report_filename = (
-            f"폭염작업_조치_결과_보고서_"
-            f"{report_date_name}_{safe_site_name}.docx"
-        )
+        report_filename, report_bytes = report_attachment_for_rows(report_rows)
         st.caption(
             "생성된 Word 보고서는 24시간 캐시에 보관되어 "
             "다운로드와 재전송에 바로 사용됩니다."
         )
-        download_report_col, send_report_col = st.columns(2)
-        with download_report_col:
-            st.download_button(
-                "Word 보고서 다운로드",
-                data=report_bytes,
-                file_name=report_filename,
-                mime=(
-                    "application/vnd.openxmlformats-officedocument."
-                    "wordprocessingml.document"
-                ),
-                use_container_width=True,
-                key="download_heat_report",
-            )
-        with send_report_col:
+        st.download_button(
+            "Word 보고서 다운로드",
+            data=report_bytes,
+            file_name=report_filename,
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+            use_container_width=True,
+            key="download_heat_report",
+        )
+        selected_mail_col, date_mail_col = st.columns(2)
+        with selected_mail_col:
             if st.button(
-                "보고서 메일 발송",
+                "선택 보고서 발송",
                 use_container_width=True,
                 key="send_heat_report_email",
             ):
@@ -5169,6 +5188,31 @@ def render_records(
                     )
                 except Exception as mail_exc:  # noqa: BLE001
                     st.error(f"메일 발송에 실패했습니다: {mail_exc}")
+        with date_mail_col:
+            if st.button(
+                "해당 날짜 전체 발송",
+                use_container_width=True,
+                key="send_all_date_reports_email",
+            ):
+                try:
+                    selected_date = clean_text(selected_report["작업날짜"])
+                    date_rows = records[records["작업날짜"] == selected_date]
+                    attachments: list[tuple[str, bytes]] = []
+                    with st.spinner("해당 날짜의 모든 보고서를 만들고 발송하고 있습니다..."):
+                        for site_name in unique_texts(date_rows["현장명"].tolist()):
+                            site_rows = date_rows[date_rows["현장명"] == site_name]
+                            attachments.append(report_attachment_for_rows(site_rows))
+                        recipient_count = send_report_attachments_email(
+                            selected_date,
+                            "전체 근무장소",
+                            attachments,
+                        )
+                    st.success(
+                        f"보고서 {len(attachments)}개를 "
+                        f"수신자 {recipient_count}명에게 발송했습니다."
+                    )
+                except Exception as mail_exc:  # noqa: BLE001
+                    st.error(f"날짜 전체 메일 발송에 실패했습니다: {mail_exc}")
     except Exception as exc:  # noqa: BLE001
         st.warning(f"보고서를 만들 수 없습니다: {exc}")
 
