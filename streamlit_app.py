@@ -34,7 +34,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.56 · 2026-08-12"
+APP_VERSION = "Professional UI v3.57 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -2874,16 +2874,9 @@ def format_special_notes_cell(
     notes: Any,
 ) -> None:
     notes_column = column_letter(COLUMNS.index("특이사항") + 1)
-    end_column = column_letter(len(COLUMNS))
     has_notes = bool(clean_text(notes))
 
-    # 기록 행 전체에 교차 음영과 하단 테두리를 적용해 행 구분을 명확히 합니다.
-    worksheet.format(
-        f"A{row_number}:{end_column}{row_number}",
-        _data_row_format(row_number),
-    )
-
-    # 특이사항이 있으면 해당 셀만 기존 주황색 강조를 유지합니다.
+    # 행 전체가 아니라 특이사항 셀 하나에만 강조를 적용합니다.
     worksheet.format(
         f"{notes_column}{row_number}",
         _special_notes_format(row_number, has_notes),
@@ -2940,13 +2933,6 @@ def normalize_existing_special_notes_format(
     ]
 
     for row_number, raw_row in enumerate(values[1:], start=2):
-        formats.append(
-            {
-                "range": f"A{row_number}:{end_column}{row_number}",
-                "format": _data_row_format(row_number),
-            }
-        )
-
         notes = raw_row[notes_index] if notes_index < len(raw_row) else ""
         if clean_text(notes):
             formats.append(
