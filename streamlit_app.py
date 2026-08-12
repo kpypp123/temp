@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "현장 폭염 조치 기록"
-APP_VERSION = "Professional UI v3.32 · 2026-08-12"
+APP_VERSION = "Professional UI v3.33 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3066,7 +3066,9 @@ def custom_measure_text(value: Any) -> str:
 def make_csv_bytes(dataframe: pd.DataFrame) -> bytes:
     output = io.StringIO()
     writer = csv.writer(output, lineterminator="\n")
-    writer.writerow(COLUMNS)
+    writer.writerow(
+        ["선임 감독" if column == "작성자" else column for column in COLUMNS]
+    )
 
     for _, row in dataframe[COLUMNS].iterrows():
         writer.writerow(
@@ -3172,7 +3174,6 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
         common_lines.append("")
 
     notes = " / ".join(unique_texts(records["특이사항"].tolist()))
-    notes = notes or "특이사항 없음"
 
     replacements = [
         ("종목 / 장소명", site_text),
@@ -3191,6 +3192,10 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
         ),
         (" 지급", ""),
         ("  - 폭염 시간대 불필요한 외부 활동 최소화", f"  - {common_lines[2]}"),
+        (
+            "  - 예시 1) 제작팀 협의 사항 적용 : ",
+            "  - " if notes else "",
+        ),
         ("영상팀 필드카메라 중요 선수 외 이글 또는 버디", notes),
         ("상황까지", ""),
         ("만", ""),
@@ -3215,6 +3220,28 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                     section_xml = payload.decode("utf-8")
                     for old, new in replacements:
                         section_xml = replace_report_text(section_xml, old, new)
+
+                    # 공통 예방조치의 마지막 항목으로 10분 휴식 기준을 고정 표시합니다.
+                    schedule_heading = (
+                        "<hp:t> 2) 일정 조정 또는 제작팀 협의 사항"
+                        "(없는 경우 생략)</hp:t>"
+                    )
+                    if notes:
+                        schedule_replacement = (
+                            "<hp:t>  - 1시간 이내 10분 이상 휴식</hp:t>"
+                            "<hp:lineBreak/>"
+                            f"{schedule_heading}"
+                        )
+                    else:
+                        # 특이사항이 없으면 일정조정/협의사항 소제목과 내용을 생략합니다.
+                        schedule_replacement = (
+                            "<hp:t>  - 1시간 이내 10분 이상 휴식</hp:t>"
+                        )
+                    section_xml = section_xml.replace(
+                        schedule_heading,
+                        schedule_replacement,
+                        1,
+                    )
                     payload = section_xml.encode("utf-8")
                 output_zip.writestr(info, payload)
 
@@ -3242,7 +3269,8 @@ def make_excel_bytes(dataframe: pd.DataFrame) -> bytes:
     )
 
     for column_index, column_name in enumerate(COLUMNS, start=1):
-        cell = worksheet.cell(row=1, column=column_index, value=column_name)
+        display_name = "선임 감독" if column_name == "작성자" else column_name
+        cell = worksheet.cell(row=1, column=column_index, value=display_name)
         cell.fill = header_fill
         cell.font = header_font
         cell.border = grid_border
@@ -3577,7 +3605,7 @@ def render_form(
         )
 
         author = st.text_input(
-            "작성자",
+            "선임 감독",
             value=clean_text(
                 editing_record.get("작성자")
             ),
@@ -4007,7 +4035,7 @@ def render_records(
         expanded=False,
     ):
         search_text = st.text_input(
-            "종목·현장명·작성자 검색",
+            "종목·현장명·선임 감독 검색",
             placeholder="검색어 입력",
             key="record_search",
         )
@@ -4267,7 +4295,7 @@ def render_records(
 
             st.caption(
                 f"{work_date} · {sport_text} · {team_text} · "
-                f"작성자 {author_text}"
+                f"선임 감독 {author_text}"
             )
 
             st.markdown(
