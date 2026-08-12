@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.48 · 2026-08-12"
+APP_VERSION = "Professional UI v3.49 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3268,14 +3268,23 @@ def report_team_summary(records: pd.DataFrame, team: str) -> str:
         cleaned = cleaned.strip(" ·ㆍ-|/")
         if cleaned:
             cleaned_measures.append(cleaned)
-    rest_total = sum(
-        parse_int(value)
-        for value in team_rows["휴게시간"].tolist()
-    )
     parts = [item.replace(" | ", " / ") for item in cleaned_measures]
-    if rest_total > 0:
-        parts.append(f"누적 휴게시간 {rest_total}분")
     return "- " + (" / ".join(parts) if parts else "조치사항 기록 없음")
+
+
+def report_department_measures(records: pd.DataFrame) -> str:
+    """선택한 시행 조치와 직접 입력 조치를 부서별로 정리합니다."""
+    lines: list[str] = []
+    for department in TEAM_OPTIONS:
+        aliases = {department, f"{department}팀"}
+        if records[records["팀"].isin(aliases)].empty:
+            continue
+        summary = report_team_summary(
+            records,
+            f"{department}팀",
+        ).removeprefix("- ")
+        lines.append(f"  - {department} : {summary}")
+    return "\n".join(lines) if lines else "  - 시행 조치 기록 없음"
 
 
 def report_team_work_time(records: pd.DataFrame, team: str) -> str:
@@ -3401,8 +3410,8 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
             "  - 예시 1) 제작팀 협의 사항 적용 : ",
             "  - " if notes else "",
         ),
-        ("강조효과 테스트 2", notes),
-        ("영상팀 필드카메라 중요 선수 외 이글 또는 버디", notes),
+        ("강조효과 테스트 2", ""),
+        ("영상팀 필드카메라 중요 선수 외 이글 또는 버디", ""),
         ("상황까지", ""),
         ("만", ""),
         ("                                     촬영하고 그 외 추가 휴식시간 부여", ""),
@@ -3477,27 +3486,53 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                         )
                         section_xml = report_head + report_result
 
-                    # 공통 예방조치의 마지막 항목으로 10분 휴식 기준을 고정 표시합니다.
+                    # 선택 버튼과 '그 외 조치사항'을 폭염 대응 조치 안에
+                    # 중계·영상·기타 부서별로 표시합니다.
                     schedule_heading = (
                         "<hp:t> 2) 일정 조정 또는 제작팀 협의 사항"
                         "(없는 경우 생략)</hp:t>"
                     )
-                    if notes:
-                        schedule_replacement = (
-                            "<hp:t>  - 1시간 이내 10분 이상 휴식</hp:t>"
-                            "<hp:lineBreak/>"
-                            f"{schedule_heading}"
-                        )
-                    else:
-                        # 특이사항이 없으면 일정조정/협의사항 소제목과 내용을 생략합니다.
-                        schedule_replacement = (
-                            "<hp:t>  - 1시간 이내 10분 이상 휴식</hp:t>"
-                        )
+                    department_measures = html.escape(
+                        report_department_measures(records),
+                        quote=False,
+                    )
+                    schedule_replacement = (
+                        "<hp:t>  - 1시간 이내 10분 이상 휴식</hp:t>"
+                        "<hp:lineBreak/>"
+                        "<hp:t> 2) 부서별 시행 조치</hp:t>"
+                        "<hp:lineBreak/>"
+                        f"<hp:t>{department_measures}</hp:t>"
+                    )
                     section_xml = section_xml.replace(
                         schedule_heading,
                         schedule_replacement,
                         1,
                     )
+
+                    # 기존 '4. 휴게 조치 결과' 표는 제거합니다. 제작팀 협의사항은
+                    # 특이사항 입력값이 있을 때만 4번 항목으로 작성합니다.
+                    result_marker = "4. 휴게 조치 결과"
+                    result_index = section_xml.find(result_marker)
+                    if result_index >= 0:
+                        table_start = section_xml.find("<hp:tbl", result_index)
+                        table_end = section_xml.find("</hp:tbl>", table_start)
+                        if table_start >= 0 and table_end >= 0:
+                            table_end += len("</hp:tbl>")
+                            section_xml = (
+                                section_xml[:table_start]
+                                + section_xml[table_end:]
+                            )
+                        consultation_text = (
+                            "4. 제작팀 협의사항\n  - "
+                            + html.escape(notes, quote=False)
+                            if notes
+                            else ""
+                        )
+                        section_xml = section_xml.replace(
+                            result_marker,
+                            consultation_text,
+                            1,
+                        )
                     payload = section_xml.encode("utf-8")
                 output_zip.writestr(info, payload)
 
