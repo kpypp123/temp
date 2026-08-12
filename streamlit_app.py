@@ -28,7 +28,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.51 · 2026-08-12"
+APP_VERSION = "Professional UI v3.52 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3287,6 +3287,109 @@ def report_department_measures(records: pd.DataFrame) -> str:
     return "\n".join(lines) if lines else "  - 시행 조치 기록 없음"
 
 
+def report_team_table_text(records: pd.DataFrame, department: str) -> str:
+    """새 보고서 표에 들어갈 시행 조치를 정리합니다."""
+    aliases = {department, f"{department}팀"}
+    team_rows = records[records["팀"].isin(aliases)]
+    if team_rows.empty:
+        return "조치사항 기록 없음"
+
+    measures: list[str] = []
+    adjustment_reason = ""
+    for value in team_rows["조치사항"].tolist():
+        for part in re.split(r"\s*\|\s*", clean_text(value)):
+            item = part.strip()
+            if not item:
+                continue
+            if re.search(
+                r"필드\s*카메라|W\s*/\s*L\s*카메라",
+                item,
+                flags=re.IGNORECASE,
+            ):
+                continue
+            if item.startswith(TIME_ADJUST_REASON_PREFIX):
+                adjustment_reason = item[len(TIME_ADJUST_REASON_PREFIX):].strip()
+                continue
+            if item == "근무 시간대 조정":
+                continue
+            if item not in measures:
+                measures.append(item)
+
+    if adjustment_reason:
+        measures.append(f"근무 시간대 조정 : {adjustment_reason}")
+    return "\n".join(f"· {item}" for item in measures) or "조치사항 기록 없음"
+
+
+def fill_report_measure_table(section_xml: str, records: pd.DataFrame) -> str:
+    """새 원본의 3번 표를 실제 존재하는 부서 행으로 채웁니다."""
+    marker_index = section_xml.find("<hp:t>중계팀</hp:t>")
+    if marker_index < 0:
+        return section_xml
+    table_start = section_xml.rfind("<hp:tbl", 0, marker_index)
+    table_end = section_xml.find("</hp:tbl>", marker_index)
+    if table_start < 0 or table_end < 0:
+        return section_xml
+    table_end += len("</hp:tbl>")
+    table_xml = section_xml[table_start:table_end]
+    row_match = re.search(r"<hp:tr>.*?</hp:tr>", table_xml, re.DOTALL)
+    if not row_match:
+        return section_xml
+
+    departments = [
+        department
+        for department in TEAM_OPTIONS
+        if not records[
+            records["팀"].isin({department, f"{department}팀"})
+        ].empty
+    ]
+    if not departments:
+        departments = ["중계"]
+
+    template_row = row_match.group(0)
+    rows: list[str] = []
+    for row_index, department in enumerate(departments):
+        values = [
+            f"{department}팀" if department != "기타" else "기타",
+            report_team_table_text(records, department),
+        ]
+        value_index = 0
+
+        def replace_cell_text(match: re.Match[str]) -> str:
+            nonlocal value_index
+            value = values[value_index] if value_index < len(values) else ""
+            value_index += 1
+            return f"<hp:t>{html.escape(value, quote=False)}</hp:t>"
+
+        row_xml = re.sub(
+            r"<hp:t>.*?</hp:t>",
+            replace_cell_text,
+            template_row,
+            flags=re.DOTALL,
+        )
+        row_xml = re.sub(
+            r'rowAddr="\d+"',
+            f'rowAddr="{row_index}"',
+            row_xml,
+        )
+        rows.append(row_xml)
+
+    new_table = table_xml[:row_match.start()] + "".join(rows) + table_xml[row_match.end():]
+    # 기존 두 번째 예시 행은 모두 새 행으로 교체합니다.
+    remaining_row = re.search(r"<hp:tr>.*?</hp:tr>", new_table[new_table.find(rows[-1]) + len(rows[-1]):], re.DOTALL)
+    if remaining_row:
+        offset = new_table.find(rows[-1]) + len(rows[-1])
+        new_table = new_table[:offset + remaining_row.start()] + new_table[offset + remaining_row.end():]
+    row_count = len(rows)
+    new_table = re.sub(r'rowCnt="\d+"', f'rowCnt="{row_count}"', new_table, count=1)
+    new_table = re.sub(
+        r'(<hp:sz width="46850" widthRelTo="ABSOLUTE" height=")\d+("[^>]*/>)',
+        rf"\g<1>{8074 * row_count}\g<2>",
+        new_table,
+        count=1,
+    )
+    return section_xml[:table_start] + new_table + section_xml[table_end:]
+
+
 def report_team_work_time(records: pd.DataFrame, team: str) -> str:
     aliases = {team, team.removesuffix("팀")}
     team_rows = records[records["팀"].isin(aliases)]
@@ -3370,8 +3473,10 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
     notes = " / ".join(unique_texts(records["특이사항"].tolist()))
 
     replacements = [
+        ("기타 (실내) / SBS프리즘타워", site_text),
         ("야구 / 삼성야구장", site_text),
         ("종목 / 장소명", site_text),
+        ("2026.08.12", work_date_text),
         ("2026.08.13", work_date_text),
         ("2026.08.10", work_date_text),
         ("중계팀 18:30~21:30", report_team_work_time(records, "중계팀")),
@@ -3380,10 +3485,16 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
         ("영상팀 08:00~17:00", report_team_work_time(records, "영상팀")),
         ("중계팀 : 홍길동", report_team_supervisor(records, "중계팀")),
         ("영상팀 : 홍길동", report_team_supervisor(records, "영상팀")),
+        ("중계 : 박준상2", report_team_supervisor(records, "중계팀")),
+        ("영상 : 박준상", report_team_supervisor(records, "영상팀")),
+        ("중계 9:00~13:00", report_team_work_time(records, "중계팀")),
+        ("영상 9:00~13:00", report_team_work_time(records, "영상팀")),
         ("해당 없음", heat_time),
         ("08:00~15:00", heat_time),
         ("28.9℃~30.9℃", temperature_text),
         ("31℃~33℃", temperature_text),
+        ("12:00~13:00", heat_time),
+        ("29.6℃", temperature_text),
         (
             "- 중계차·장비차·중계석·중계스태프실 냉방 가동",
             f"- {common_lines[0]}",
@@ -3440,6 +3551,12 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                     section_xml = payload.decode("utf-8")
                     for old, new in replacements:
                         section_xml = replace_report_text(section_xml, old, new)
+
+                    # 사용자가 수정한 최신 원본의 팀별 표를 실제 기록으로 채웁니다.
+                    section_xml = fill_report_measure_table(
+                        section_xml,
+                        records,
+                    )
 
                     # 치환된 조치 문구가 다음 검색어로 다시 오인되지 않도록
                     # 마지막 단계에서 팀별 임시표시를 실제 내용으로 바꿉니다.
@@ -3563,6 +3680,50 @@ def make_heat_report_bytes(records: pd.DataFrame) -> bytes:
                             consultation_text,
                             1,
                         )
+
+                    # 최신 원본의 4번 항목은 제목과 내용을 반드시 줄바꿈합니다.
+                    # 특이사항이 없으면 해당 문단 전체를 생략합니다.
+                    special_paragraph_pattern = (
+                        r"<hp:p(?P<attrs>[^>]*)>"
+                        r"(?P<body>.*?<hp:t>4\. 특이사항.*?</hp:t>.*?)"
+                        r"</hp:p>"
+                    )
+                    special_match = re.search(
+                        special_paragraph_pattern,
+                        section_xml,
+                        flags=re.DOTALL,
+                    )
+                    if special_match:
+                        if notes:
+                            body = special_match.group("body")
+                            body = re.sub(
+                                r"<hp:t>4\. 특이사항.*?</hp:t>",
+                                "<hp:t>4. 특이사항<hp:lineBreak/>"
+                                f"  - {html.escape(notes, quote=False)}</hp:t>",
+                                body,
+                                count=1,
+                                flags=re.DOTALL,
+                            )
+                            special_replacement = (
+                                f"<hp:p{special_match.group('attrs')}>"
+                                f"{body}</hp:p>"
+                            )
+                        else:
+                            special_replacement = ""
+                        section_xml = (
+                            section_xml[:special_match.start()]
+                            + special_replacement
+                            + section_xml[special_match.end():]
+                        )
+                    # 새 원본에 예시로 입력된 특이사항 문단은 실제 값과 별개이므로 제거합니다.
+                    section_xml = re.sub(
+                        r"<hp:p[^>]*>(?:(?!</hp:p>).)*설치 철수 등"
+                        r"(?:(?!</hp:p>).)*</hp:p>",
+                        "",
+                        section_xml,
+                        count=1,
+                        flags=re.DOTALL,
+                    )
                     payload = section_xml.encode("utf-8")
                 output_zip.writestr(info, payload)
 
