@@ -34,7 +34,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.55 · 2026-08-12"
+APP_VERSION = "Professional UI v3.56 · 2026-08-12"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -3303,7 +3303,21 @@ def report_team_table_text(records: pd.DataFrame, department: str) -> str:
     measures: list[str] = []
     adjustment_reason = ""
     for value in team_rows["조치사항"].tolist():
-        for part in re.split(r"\s*\|\s*", clean_text(value)):
+        normalized_value = clean_text(value)
+        # 일부 기존 기록은 괄호 안의 쉼표 위치가 조치 구분자(|)로
+        # 저장되어 한 문장이 두 개의 글머리표로 출력됩니다.
+        # 알려진 버튼 문구는 먼저 원래 한 문장으로 복원합니다.
+        normalized_value = re.sub(
+            r"휴식\s*공간\(휴게실\s*(?:,|\|)\s*그늘막\s*등\)\s*운영",
+            "휴식 공간(휴게실, 그늘막 등) 운영",
+            normalized_value,
+        )
+        normalized_value = re.sub(
+            r"냉방\s*장치\s*가동\s*\(중계차\s*(?:,|\|)\s*방송\s*시설\s*등\)",
+            "냉방 장치 가동 (중계차, 방송 시설 등)",
+            normalized_value,
+        )
+        for part in re.split(r"\s*\|\s*", normalized_value):
             # 기존 시트 값에 수동 줄바꿈이 포함되어도 한 조치 문장은
             # 보고서에서 끊어지지 않도록 문장 내부 공백을 정규화합니다.
             item = re.sub(r"\s+", " ", part).strip()
