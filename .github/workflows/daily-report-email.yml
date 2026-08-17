@@ -33,6 +33,7 @@ jobs:
           MAIL_SENDER: ${{ secrets.MAIL_SENDER }}
           MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
           MAIL_RECIPIENTS: ${{ secrets.MAIL_RECIPIENTS }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_TOML: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_TOML }}
           REPORT_DATE: ${{ inputs.report_date }}
         run: python daily_report_email.py
