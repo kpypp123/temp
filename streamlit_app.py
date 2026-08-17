@@ -741,6 +741,98 @@ def clean_text(value: Any) -> str:
     return str(value).strip()
 
 
+REPORT_SITE_ALIASES = {
+    "광주챔피언스필드": "광주기아챔피언스필드",
+    "광주기아챔피언스필드": "광주기아챔피언스필드",
+    "몽베르cc": "몽베르CC",
+    "몽베르컨트리클럽": "몽베르CC",
+}
+
+
+def normalize_report_site_token(value: Any) -> str:
+    return re.sub(r"[^0-9A-Za-z가-힣]+", "", clean_text(value)).casefold()
+
+
+def canonical_report_site(value: Any) -> str:
+    """보고서에서 같은 장소로 묶을 표준 근무장소명을 반환합니다."""
+    site = clean_text(value)
+    alias_key = normalize_report_site_token(site)
+    return REPORT_SITE_ALIASES.get(alias_key, site)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def search_kakao_site_identity(
+    site_name: str,
+    rest_api_key: str,
+) -> dict[str, Any]:
+    """카카오 장소검색의 장소 ID·표준명·좌표를 반환합니다."""
+    params = urllib.parse.urlencode({"query": site_name, "size": "5"})
+    request = urllib.request.Request(
+        f"{KAKAO_PLACE_API_URL}?{params}",
+        headers={
+            "Authorization": f"KakaoAK {rest_api_key}",
+            "User-Agent": "checktemp-streamlit/1.0",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    documents = result.get("documents") or []
+    if not documents:
+        raise ValueError("카카오 장소 검색 결과가 없습니다")
+    place = documents[0]
+    return {
+        "id": clean_text(place.get("id")),
+        "name": clean_text(place.get("place_name")) or site_name,
+        "address": (
+            clean_text(place.get("road_address_name"))
+            or clean_text(place.get("address_name"))
+        ),
+        "latitude": float(place["y"]),
+        "longitude": float(place["x"]),
+    }
+
+
+def report_site_identity(
+    site_name: Any,
+    kakao_rest_api_key: str = "",
+) -> tuple[str, str]:
+    """보고서 묶음 키와 표시할 표준 장소명을 반환합니다."""
+    original = clean_text(site_name)
+    if kakao_rest_api_key and original:
+        try:
+            place = search_kakao_site_identity(original, kakao_rest_api_key)
+            place_id = clean_text(place.get("id"))
+            place_name = clean_text(place.get("name")) or original
+            if place_id:
+                return f"kakao:{place_id}", place_name
+        except Exception:  # noqa: BLE001
+            pass
+    fallback_name = canonical_report_site(original)
+    return f"text:{normalize_report_site_token(fallback_name)}", fallback_name
+
+
+def canonicalize_report_rows(
+    records: pd.DataFrame,
+    kakao_rest_api_key: str = "",
+) -> pd.DataFrame:
+    """원본 기록을 바꾸지 않고 보고서용 장소 ID·명칭을 표준화합니다."""
+    normalized = records.copy()
+    site_names = list(dict.fromkeys(
+        clean_text(site) for site in normalized["현장명"].tolist()
+    ))
+    identities = {
+        site: report_site_identity(site, kakao_rest_api_key)
+        for site in site_names
+    }
+    normalized["_보고서장소키"] = normalized["현장명"].map(
+        lambda site: identities[clean_text(site)][0]
+    )
+    normalized["현장명"] = normalized["현장명"].map(
+        lambda site: identities[clean_text(site)][1]
+    )
+    return normalized
+
+
 def parse_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(clean_text(value)))
@@ -1017,26 +1109,10 @@ def search_kakao_site_coordinates(
     rest_api_key: str,
 ) -> tuple[float, float, str]:
     """카카오 장소 검색으로 현장명의 위도·경도를 찾습니다."""
-    params = urllib.parse.urlencode({"query": site_name, "size": "5"})
-    request = urllib.request.Request(
-        f"{KAKAO_PLACE_API_URL}?{params}",
-        headers={
-            "Authorization": f"KakaoAK {rest_api_key}",
-            "User-Agent": "checktemp-streamlit/1.0",
-        },
-    )
-
-    with urllib.request.urlopen(request, timeout=8) as response:
-        result = json.loads(response.read().decode("utf-8"))
-
-    documents = result.get("documents") or []
-    if not documents:
-        raise ValueError("카카오 장소 검색 결과가 없습니다")
-
-    place = documents[0]
-    latitude = float(place["y"])
-    longitude = float(place["x"])
-    matched_name = clean_text(place.get("place_name")) or site_name
+    place = search_kakao_site_identity(site_name, rest_api_key)
+    latitude = float(place["latitude"])
+    longitude = float(place["longitude"])
+    matched_name = clean_text(place.get("name")) or site_name
 
     if not (33 <= latitude <= 39 and 124 <= longitude <= 132):
         raise ValueError("검색된 장소가 대한민국 범위를 벗어났습니다")
@@ -3741,6 +3817,7 @@ def cached_heat_report_docx_bytes(
 def report_attachment_for_rows(records: pd.DataFrame) -> tuple[str, bytes]:
     if records.empty:
         raise ValueError("보고서로 만들 기록이 없습니다.")
+    records = canonicalize_report_rows(records)
     work_date = clean_text(records.iloc[0].get("작업날짜"))
     site = clean_text(records.iloc[0].get("현장명"))
     safe_site = re.sub(r"[^0-9A-Za-z가-힣_-]+", "_", site).strip("_") or "현장"
@@ -3755,7 +3832,7 @@ def report_attachment_for_rows(records: pd.DataFrame) -> tuple[str, bytes]:
     )
     report_bytes = cached_heat_report_docx_bytes(
         records_json,
-        "approval-box-v3",
+        "approval-box-v4-site-alias",
     )
     return filename, report_bytes
 
@@ -5183,13 +5260,16 @@ def render_records(
         "Word DOCX 보고서 한 장으로 묶습니다."
     )
 
+    kakao_report_key = get_secret(("location", "kakao_rest_api_key"))
+    report_source = canonicalize_report_rows(filtered, kakao_report_key)
+    report_source["보고서장소"] = report_source["현장명"]
     report_candidates = (
-        filtered[["작업날짜", "현장명"]]
-        .drop_duplicates()
+        report_source[["작업날짜", "_보고서장소키", "보고서장소"]]
+        .drop_duplicates(subset=["작업날짜", "_보고서장소키"])
         .to_dict("records")
     )
     report_labels = [
-        f"{clean_text(item['작업날짜'])} · {clean_text(item['현장명'])}"
+        f"{clean_text(item['작업날짜'])} · {clean_text(item['보고서장소'])}"
         for item in report_candidates
     ]
     selected_report_label = st.selectbox(
@@ -5199,9 +5279,12 @@ def render_records(
     )
     selected_report_index = report_labels.index(selected_report_label)
     selected_report = report_candidates[selected_report_index]
-    report_rows = filtered[
-        (filtered["작업날짜"] == selected_report["작업날짜"])
-        & (filtered["현장명"] == selected_report["현장명"])
+    report_rows = report_source[
+        (report_source["작업날짜"] == selected_report["작업날짜"])
+        & (
+            report_source["_보고서장소키"]
+            == selected_report["_보고서장소키"]
+        )
     ]
 
     try:
@@ -5232,7 +5315,7 @@ def render_records(
                     with st.spinner("보고서를 메일로 발송하고 있습니다..."):
                         recipient_count = send_report_email(
                             clean_text(selected_report["작업날짜"]),
-                            clean_text(selected_report["현장명"]),
+                            clean_text(selected_report["보고서장소"]),
                             report_filename,
                             report_bytes,
                         )
@@ -5250,10 +5333,18 @@ def render_records(
                 try:
                     selected_date = clean_text(selected_report["작업날짜"])
                     date_rows = records[records["작업날짜"] == selected_date]
+                    date_rows = canonicalize_report_rows(
+                        date_rows,
+                        kakao_report_key,
+                    )
                     attachments: list[tuple[str, bytes]] = []
                     with st.spinner("해당 날짜의 모든 보고서를 만들고 발송하고 있습니다..."):
-                        for site_name in unique_texts(date_rows["현장명"].tolist()):
-                            site_rows = date_rows[date_rows["현장명"] == site_name]
+                        for site_key in unique_texts(
+                            date_rows["_보고서장소키"].tolist()
+                        ):
+                            site_rows = date_rows[
+                                date_rows["_보고서장소키"] == site_key
+                            ]
                             attachments.append(report_attachment_for_rows(site_rows))
                         recipient_count = send_report_attachments_email(
                             selected_date,
