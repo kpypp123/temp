@@ -741,25 +741,6 @@ def clean_text(value: Any) -> str:
     return str(value).strip()
 
 
-REPORT_SITE_ALIASES = {
-    "광주챔피언스필드": "광주기아챔피언스필드",
-    "광주기아챔피언스필드": "광주기아챔피언스필드",
-    "몽베르cc": "몽베르CC",
-    "몽베르컨트리클럽": "몽베르CC",
-}
-
-
-def normalize_report_site_token(value: Any) -> str:
-    return re.sub(r"[^0-9A-Za-z가-힣]+", "", clean_text(value)).casefold()
-
-
-def canonical_report_site(value: Any) -> str:
-    """보고서에서 같은 장소로 묶을 표준 근무장소명을 반환합니다."""
-    site = clean_text(value)
-    alias_key = normalize_report_site_token(site)
-    return REPORT_SITE_ALIASES.get(alias_key, site)
-
-
 @st.cache_data(show_spinner=False, ttl=86400)
 def search_kakao_site_identity(
     site_name: str,
@@ -794,34 +775,28 @@ def search_kakao_site_identity(
 
 def report_site_identity(
     site_name: Any,
-    kakao_rest_api_key: str = "",
 ) -> tuple[str, str]:
-    """보고서 묶음 키와 표시할 표준 장소명을 반환합니다."""
+    """지정 키워드 또는 정확한 입력값으로 보고서 장소를 구분합니다."""
     original = clean_text(site_name)
-    if kakao_rest_api_key and original:
-        try:
-            place = search_kakao_site_identity(original, kakao_rest_api_key)
-            place_id = clean_text(place.get("id"))
-            place_name = clean_text(place.get("name")) or original
-            if place_id:
-                return f"kakao:{place_id}", place_name
-        except Exception:  # noqa: BLE001
-            pass
-    fallback_name = canonical_report_site(original)
-    return f"text:{normalize_report_site_token(fallback_name)}", fallback_name
+    if "몽베르" in original.casefold():
+        return "keyword:몽베르", "몽베르CC"
+    if "챔피언스필드" in original and (
+        "광주" in original or "기아" in original
+    ):
+        return "keyword:광주기아챔피언스필드", "광주기아챔피언스필드"
+    return f"exact:{original}", original
 
 
 def canonicalize_report_rows(
     records: pd.DataFrame,
-    kakao_rest_api_key: str = "",
 ) -> pd.DataFrame:
-    """원본 기록을 바꾸지 않고 보고서용 장소 ID·명칭을 표준화합니다."""
+    """원본 기록을 바꾸지 않고 보고서용 장소 키·명칭을 적용합니다."""
     normalized = records.copy()
     site_names = list(dict.fromkeys(
         clean_text(site) for site in normalized["현장명"].tolist()
     ))
     identities = {
-        site: report_site_identity(site, kakao_rest_api_key)
+        site: report_site_identity(site)
         for site in site_names
     }
     normalized["_보고서장소키"] = normalized["현장명"].map(
@@ -3832,7 +3807,7 @@ def report_attachment_for_rows(records: pd.DataFrame) -> tuple[str, bytes]:
     )
     report_bytes = cached_heat_report_docx_bytes(
         records_json,
-        "approval-box-v4-site-alias",
+        "approval-box-v5-keyword-site",
     )
     return filename, report_bytes
 
@@ -4966,6 +4941,10 @@ def render_form(
 
     validation_errors: list[str] = []
 
+    if not measures:
+        st.warning("예정 또는 시행할 조치를 선택해 주세요")
+        return
+
     if not site.strip():
         validation_errors.append(
             "근무장소를 입력해 주세요."
@@ -5260,8 +5239,7 @@ def render_records(
         "Word DOCX 보고서 한 장으로 묶습니다."
     )
 
-    kakao_report_key = get_secret(("location", "kakao_rest_api_key"))
-    report_source = canonicalize_report_rows(filtered, kakao_report_key)
+    report_source = canonicalize_report_rows(filtered)
     report_source["보고서장소"] = report_source["현장명"]
     report_candidates = (
         report_source[["작업날짜", "_보고서장소키", "보고서장소"]]
@@ -5333,10 +5311,7 @@ def render_records(
                 try:
                     selected_date = clean_text(selected_report["작업날짜"])
                     date_rows = records[records["작업날짜"] == selected_date]
-                    date_rows = canonicalize_report_rows(
-                        date_rows,
-                        kakao_report_key,
-                    )
+                    date_rows = canonicalize_report_rows(date_rows)
                     attachments: list[tuple[str, bytes]] = []
                     with st.spinner("해당 날짜의 모든 보고서를 만들고 발송하고 있습니다..."):
                         for site_key in unique_texts(
