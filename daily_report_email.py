@@ -121,28 +121,34 @@ def send_email(report_date: date, reports: list[tuple[str, bytes]]) -> None:
     password = required_env("MAIL_APP_PASSWORD").replace(" ", "")
     recipients = recipients_from_env()
 
-    message = EmailMessage()
-    message["Subject"] = f"[CheckTemp] {report_date:%Y-%m-%d} 폭염작업 조치 결과 보고서"
-    message["From"] = sender
-    message["To"] = sender
-    message["Bcc"] = ", ".join(recipients)
     names = "\n".join(f"- {name}" for name, _ in reports)
-    message.set_content(
-        f"{report_date:%Y-%m-%d} 근무 기록으로 자동 작성한 보고서입니다.\n\n"
-        f"첨부 보고서: {len(reports)}개\n{names}\n\n"
-        "이 메일은 CheckTemp에서 자동 발송되었습니다."
-    )
-    for filename, payload in reports:
-        message.add_attachment(
-            payload,
-            maintype="application",
-            subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
-            filename=filename,
-        )
-
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
         smtp.login(sender, password)
-        smtp.send_message(message)
+        for recipient in recipients:
+            message = EmailMessage()
+            message["Subject"] = (
+                f"[CheckTemp] {report_date:%Y-%m-%d} "
+                "폭염작업 조치 결과 보고서"
+            )
+            message["From"] = sender
+            message["To"] = recipient
+            message.set_content(
+                f"{report_date:%Y-%m-%d} 근무 기록으로 "
+                "자동 작성한 보고서입니다.\n\n"
+                f"첨부 보고서: {len(reports)}개\n{names}\n\n"
+                "이 메일은 CheckTemp에서 자동 발송되었습니다."
+            )
+            for filename, payload in reports:
+                message.add_attachment(
+                    payload,
+                    maintype="application",
+                    subtype=(
+                        "vnd.openxmlformats-officedocument."
+                        "wordprocessingml.document"
+                    ),
+                    filename=filename,
+                )
+            smtp.send_message(message)
 
 
 def main() -> None:
@@ -159,4 +165,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
 
