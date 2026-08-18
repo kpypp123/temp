@@ -3870,31 +3870,36 @@ def send_report_attachments_email(
             + ", ".join(missing)
         )
 
-    message = EmailMessage()
     if not attachments:
         raise RuntimeError("메일에 첨부할 보고서가 없습니다.")
     if sum(len(payload) for _, payload in attachments) > 20 * 1024 * 1024:
         raise RuntimeError("첨부파일 합계가 20MB를 넘어 날짜를 나누어 발송해 주세요.")
 
-    message["Subject"] = f"[CheckTemp] {report_date} {scope} 폭염작업 조치 결과 보고서"
-    message["From"] = sender
-    message["To"] = sender
-    message["Bcc"] = ", ".join(recipients)
-    message.set_content(
-        f"{report_date} {scope} 근무 기록으로 작성한 보고서입니다.\n\n"
-        f"첨부된 Word 보고서 {len(attachments)}개를 확인해 주세요.\n\n"
-        "이 메일은 CheckTemp에서 발송되었습니다."
-    )
-    for filename, report_bytes in attachments:
-        message.add_attachment(
-            report_bytes,
-            maintype="application",
-            subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
-            filename=filename,
-        )
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
         smtp.login(sender, password)
-        smtp.send_message(message)
+        for recipient in recipients:
+            message = EmailMessage()
+            message["Subject"] = (
+                f"[CheckTemp] {report_date} {scope} 폭염작업 조치 결과 보고서"
+            )
+            message["From"] = sender
+            message["To"] = recipient
+            message.set_content(
+                f"{report_date} {scope} 근무 기록으로 작성한 보고서입니다.\n\n"
+                f"첨부된 Word 보고서 {len(attachments)}개를 확인해 주세요.\n\n"
+                "이 메일은 CheckTemp에서 발송되었습니다."
+            )
+            for filename, report_bytes in attachments:
+                message.add_attachment(
+                    report_bytes,
+                    maintype="application",
+                    subtype=(
+                        "vnd.openxmlformats-officedocument."
+                        "wordprocessingml.document"
+                    ),
+                    filename=filename,
+                )
+            smtp.send_message(message)
     return len(recipients)
 
 
@@ -5598,3 +5603,5 @@ else:
         records_df,
         connection_error,
     )
+
+
