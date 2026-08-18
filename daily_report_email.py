@@ -95,10 +95,7 @@ def safe_site_name(value: object) -> str:
 def build_reports(module: ModuleType, records: pd.DataFrame, report_date: date):
     date_text = report_date.isoformat()
     daily = records[records["작업날짜"].astype(str).str.strip() == date_text]
-    daily = module.canonicalize_report_rows(
-        daily,
-        os.environ.get("KAKAO_REST_API_KEY", "").strip(),
-    )
+    daily = module.canonicalize_report_rows(daily)
     reports: list[tuple[str, bytes]] = []
     for site_key in daily["_보고서장소키"].drop_duplicates():
         site_rows = daily[daily["_보고서장소키"] == site_key]
@@ -162,4 +159,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-ㅣㅣ
+
