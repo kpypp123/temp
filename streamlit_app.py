@@ -778,8 +778,13 @@ def report_site_identity(
 ) -> tuple[str, str]:
     """지정 키워드 또는 정확한 입력값으로 보고서 장소를 구분합니다."""
     original = clean_text(site_name)
-    if "몽베르" in original.casefold():
+    folded = original.casefold()
+    if "몽베르" in folded:
         return "keyword:몽베르", "몽베르CC"
+    if "솔라고" in folded:
+        return "keyword:솔라고", "솔라고CC"
+    if "사직" in folded and ("야구장" in folded or "구장" in folded):
+        return "keyword:사직야구장", "사직야구장"
     if "챔피언스필드" in original and (
         "광주" in original or "기아" in original
     ):
@@ -3807,7 +3812,7 @@ def report_attachment_for_rows(records: pd.DataFrame) -> tuple[str, bytes]:
     )
     report_bytes = cached_heat_report_docx_bytes(
         records_json,
-        "approval-box-v5-keyword-site",
+        "approval-box-v6-sajik-solago-site",
     )
     return filename, report_bytes
 
