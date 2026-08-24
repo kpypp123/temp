@@ -5603,6 +5603,7 @@ def render_records(
     report_candidates = (
         report_source[["작업날짜", "_보고서장소키", "보고서장소"]]
         .drop_duplicates(subset=["작업날짜", "_보고서장소키"])
+        .sort_values(["작업날짜", "보고서장소"], ascending=[False, True])
         .to_dict("records")
     )
     report_labels = [
