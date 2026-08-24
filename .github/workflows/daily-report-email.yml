@@ -2,8 +2,8 @@ name: 전날 폭염 보고서 자동 메일
 
 on:
   schedule:
-    - cron: "30 10 * * *"
-      timezone: "Asia/Seoul"
+    # GitHub Actions cron uses UTC. 01:00 UTC = 10:00 KST.
+    - cron: "0 1 * * *"
   workflow_dispatch:
     inputs:
       report_date:
