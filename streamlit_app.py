@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import csv
 import base64
+import difflib
 import html
 import json
 import io
 import logging
 import math
+import os
 import re
 import smtplib
 import urllib.parse
@@ -773,23 +775,331 @@ def search_kakao_site_identity(
     }
 
 
+def generic_report_site_identity(site_name: Any) -> tuple[str, str]:
+    """새 장소도 표기 차이만으로 보고서가 나뉘지 않도록 비교 키를 만듭니다."""
+    original = clean_text(site_name)
+    display = re.sub(r"\s+", " ", original).strip()
+    display = re.sub(r"\s*[\\(（][^\\)）]*[\\)）]\s*", " ", display).strip()
+    display = display.replace("센타", "센터")
+
+    folded = display.casefold()
+    folded = folded.replace("씨씨", "cc")
+    compact = re.sub(r"[\s\-_/.,·ㆍ:：]+", "", folded)
+    compact = compact.replace("컨트리클럽", "cc")
+    compact = compact.replace("골프클럽", "gc")
+    compact = compact.replace("골프장", "gc")
+    compact = compact.replace("센타", "센터")
+
+    key = re.sub(r"(?:cc|gc)$", "", compact)
+    key = key or compact or original.casefold()
+
+    golf_suffix = re.search(
+        r"(?:cc|씨씨|컨트리클럽|골프클럽|골프장)\s*$",
+        display,
+        flags=re.IGNORECASE,
+    )
+    if golf_suffix:
+        display = re.sub(
+            r"\s*(?:cc|씨씨|컨트리클럽|골프클럽|골프장)\s*$",
+            "",
+            display,
+            flags=re.IGNORECASE,
+        ).strip()
+        display = f"{display}CC"
+
+    return f"normalized:{key}", display or original
+
+
+def report_place_api_key() -> str:
+    """보고서 장소 묶기에 사용할 카카오 REST API 키를 찾습니다."""
+    for env_name in ("KAKAO_REST_API_KEY", "KAKAO_REST_KEY"):
+        value = clean_text(os.environ.get(env_name))
+        if value:
+            return value
+    return get_secret(("location", "kakao_rest_api_key"))
+
+
+REPORT_SITE_ALIAS_RULES = (
+    ("몽베르CC", ("몽베르",), ()),
+    ("솔라고CC", ("솔라고",), ()),
+    (
+        "포천힐스CC",
+        ("포천힐스", "포천힐스cc", "포천힐스씨씨", "포천힐스컨트리클럽"),
+        (),
+    ),
+    ("사직야구장", ("사직",), ("야구장", "구장")),
+    (
+        "단양군체육관",
+        ("단양",),
+        ("군체육관", "국민체육센타", "국민체육센터", "체육관"),
+    ),
+    ("광주기아챔피언스필드", ("챔피언스필드",), ("광주", "기아")),
+    ("창원NC파크", ("창원nc파크", "창원엔씨파크"), ()),
+)
+
+
+def report_site_alias_key(value: Any) -> str:
+    """장소 별칭 비교용 문자열을 만듭니다."""
+    text = clean_text(value).casefold()
+    text = text.replace("센타", "센터").replace("씨씨", "cc")
+    text = re.sub(r"\s*[\\(（][^\\)）]*[\\)）]\s*", "", text)
+    text = re.sub(r"[\s\-_/.,·ㆍ:：]+", "", text)
+    text = text.replace("컨트리클럽", "cc")
+    text = text.replace("골프클럽", "gc")
+    text = text.replace("골프장", "gc")
+    return text
+
+
+def known_report_site_identity(site_name: Any) -> tuple[str, str] | None:
+    """API보다 우선 적용할 현장 별칭을 찾습니다."""
+    alias_key = report_site_alias_key(site_name)
+    if not alias_key:
+        return None
+    for display_name, aliases, required_any in REPORT_SITE_ALIAS_RULES:
+        alias_matches = any(
+            report_site_alias_key(alias) in alias_key
+            for alias in aliases
+        )
+        required_matches = (
+            not required_any
+            or any(report_site_alias_key(token) in alias_key for token in required_any)
+        )
+        if alias_matches and required_matches:
+            keyword = report_site_alias_key(display_name)
+            return f"keyword:{keyword}", display_name
+    return None
+
+
 def report_site_identity(
     site_name: Any,
+    kakao_key: str = "",
 ) -> tuple[str, str]:
-    """지정 키워드 또는 정확한 입력값으로 보고서 장소를 구분합니다."""
+    """장소 API, 지정 키워드, 일반 정규화로 보고서 장소를 구분합니다."""
     original = clean_text(site_name)
-    folded = original.casefold()
-    if "몽베르" in folded:
-        return "keyword:몽베르", "몽베르CC"
-    if "솔라고" in folded:
-        return "keyword:솔라고", "솔라고CC"
-    if "사직" in folded and ("야구장" in folded or "구장" in folded):
-        return "keyword:사직야구장", "사직야구장"
-    if "챔피언스필드" in original and (
-        "광주" in original or "기아" in original
+    known_identity = known_report_site_identity(original)
+    if known_identity:
+        return known_identity
+
+    if kakao_key and original:
+        try:
+            place = search_kakao_site_identity(original, kakao_key)
+            place_id = clean_text(place.get("id"))
+            place_name = clean_text(place.get("name")) or original
+            if place_id:
+                display_name = generic_report_site_identity(place_name)[1]
+                return f"kakao-place:{place_id}", display_name
+        except Exception:  # noqa: BLE001
+            pass
+
+    return generic_report_site_identity(original)
+
+
+def report_site_similarity_key(value: Any) -> str:
+    """유사 장소 판단에 사용할 느슨한 비교 문자열을 만듭니다."""
+    text = clean_text(value).casefold()
+    text = text.replace("센타", "센터").replace("씨씨", "cc")
+    text = re.sub(r"\s*[\\(（][^\\)）]*[\\)）]\s*", "", text)
+    text = re.sub(r"[\s\-_/.,·ㆍ:：]+", "", text)
+    for suffix in (
+        "컨트리클럽",
+        "골프클럽",
+        "골프장",
+        "국민체육센터",
+        "문화체육센터",
+        "실내체육관",
+        "체육센터",
+        "체육관",
+        "주차장",
+        "센터",
+        "cc",
+        "gc",
     ):
-        return "keyword:광주기아챔피언스필드", "광주기아챔피언스필드"
-    return f"exact:{original}", original
+        text = text.replace(suffix, "")
+    return text
+
+
+def report_site_name_similarity(left: Any, right: Any) -> float:
+    """두 장소명이 같은 현장일 가능성을 0~1로 계산합니다."""
+    left_key = report_site_similarity_key(left)
+    right_key = report_site_similarity_key(right)
+    if not left_key or not right_key:
+        return 0.0
+    if left_key == right_key:
+        return 1.0
+    sequence_score = difflib.SequenceMatcher(None, left_key, right_key).ratio()
+    left_chars = set(left_key)
+    right_chars = set(right_key)
+    dice_score = (
+        2 * len(left_chars & right_chars) / (len(left_chars) + len(right_chars))
+        if left_chars and right_chars
+        else 0.0
+    )
+    return max(sequence_score, dice_score)
+
+
+def report_site_region_key(value: Any) -> str:
+    """종목과 함께 묶을 지역 단위 키를 만듭니다."""
+    text = report_site_alias_key(value)
+    if not text:
+        return ""
+    explicit_region = re.search(r"([가-힣]{2,4})(?:시|군|구)", text)
+    if explicit_region:
+        return explicit_region.group(1)
+    hangul_parts = re.findall(r"[가-힣]+", text)
+    if not hangul_parts:
+        return ""
+    first_part = hangul_parts[0]
+    if len(first_part) >= 2:
+        return first_part[:2]
+    return first_part
+
+
+def report_rows_sport_region_key(rows: pd.DataFrame) -> str:
+    """보고서 행 묶음의 종목+지역 키를 반환합니다."""
+    if rows.empty:
+        return ""
+    first = rows.iloc[0]
+    site = clean_text(first.get("현장명"))
+    sport = normalize_sport(first.get("종목"), site)
+    if sport not in {"프로야구", "KLPGA", "KPGA"}:
+        return ""
+    region = report_site_region_key(site)
+    if not region:
+        return ""
+    return f"{sport}:{region}"
+
+
+def report_sport_region_match(
+    left_rows: pd.DataFrame,
+    right_rows: pd.DataFrame,
+) -> bool:
+    """업무내용과 지역이 같으면 표기 차이로 보고서가 갈라지지 않게 합니다."""
+    left_key = report_rows_sport_region_key(left_rows)
+    right_key = report_rows_sport_region_key(right_rows)
+    return bool(left_key and left_key == right_key)
+
+
+def report_time_span_minutes(rows: pd.DataFrame) -> tuple[int | None, int | None]:
+    """기록 묶음의 가장 이른 시작과 가장 늦은 종료를 분 단위로 반환합니다."""
+    starts: list[int] = []
+    ends: list[int] = []
+    for value in rows.get("근무시작", pd.Series(dtype=object)).tolist():
+        parsed = parse_time_value(value)
+        if parsed is not None:
+            starts.append(parsed.hour * 60 + parsed.minute)
+    for value in rows.get("근무종료", pd.Series(dtype=object)).tolist():
+        parsed = parse_time_value(value)
+        if parsed is not None:
+            ends.append(parsed.hour * 60 + parsed.minute)
+    return (min(starts) if starts else None, max(ends) if ends else None)
+
+
+def report_time_spans_close(
+    left_rows: pd.DataFrame,
+    right_rows: pd.DataFrame,
+) -> bool:
+    """근무시간이 겹치거나 시작 시간이 크게 다르지 않은지 확인합니다."""
+    left_start, left_end = report_time_span_minutes(left_rows)
+    right_start, right_end = report_time_span_minutes(right_rows)
+    if None in (left_start, left_end, right_start, right_end):
+        return True
+    assert left_start is not None
+    assert left_end is not None
+    assert right_start is not None
+    assert right_end is not None
+    overlaps = max(left_start, right_start) <= min(left_end, right_end)
+    starts_close = abs(left_start - right_start) <= 180
+    return overlaps or starts_close
+
+
+def report_broadcast_team_pair(
+    left_rows: pd.DataFrame,
+    right_rows: pd.DataFrame,
+) -> bool:
+    """중계·영상이 함께 움직인 기록인지 확인합니다."""
+    left_teams = {
+        clean_text(value).removesuffix("팀")
+        for value in left_rows.get("팀", pd.Series(dtype=object)).tolist()
+    }
+    right_teams = {
+        clean_text(value).removesuffix("팀")
+        for value in right_rows.get("팀", pd.Series(dtype=object)).tolist()
+    }
+    combined = left_teams | right_teams
+    return "중계" in combined and "영상" in combined
+
+
+def merge_similar_report_sites(normalized: pd.DataFrame) -> pd.DataFrame:
+    """같은 날짜의 중계·영상 유사 장소를 보고서 한 묶음으로 합칩니다."""
+    if normalized.empty:
+        return normalized
+
+    for work_date, date_rows in normalized.groupby("작업날짜", dropna=False):
+        _ = work_date
+        groups = [
+            (key, rows.copy())
+            for key, rows in date_rows.groupby("_보고서장소키", dropna=False)
+        ]
+        if len(groups) < 2:
+            continue
+
+        parent = {key: key for key, _ in groups}
+
+        def find(key: str) -> str:
+            while parent[key] != key:
+                parent[key] = parent[parent[key]]
+                key = parent[key]
+            return key
+
+        def union(left: str, right: str) -> None:
+            left_root = find(left)
+            right_root = find(right)
+            if left_root != right_root:
+                parent[right_root] = left_root
+
+        for left_index, (left_key, left_rows) in enumerate(groups):
+            for right_key, right_rows in groups[left_index + 1:]:
+                if not report_broadcast_team_pair(left_rows, right_rows):
+                    continue
+                if not report_time_spans_close(left_rows, right_rows):
+                    continue
+                if report_sport_region_match(left_rows, right_rows):
+                    union(left_key, right_key)
+                    continue
+                left_name = clean_text(left_rows.iloc[0].get("현장명"))
+                right_name = clean_text(right_rows.iloc[0].get("현장명"))
+                similarity = report_site_name_similarity(left_name, right_name)
+                if similarity >= 0.58:
+                    union(left_key, right_key)
+
+        merged_names: dict[str, str] = {}
+        for key, rows in groups:
+            root = find(key)
+            names = unique_texts(rows["현장명"].tolist())
+            current = merged_names.get(root, "")
+            for name in names:
+                if not current:
+                    current = name
+                    continue
+                current_has_cc = current.casefold().endswith("cc")
+                candidate_has_cc = name.casefold().endswith("cc")
+                if candidate_has_cc and not current_has_cc:
+                    current = name
+                elif candidate_has_cc == current_has_cc and len(name) < len(current):
+                    current = name
+            merged_names[root] = current
+
+        date_index = date_rows.index
+        normalized.loc[date_index, "_보고서장소키"] = normalized.loc[
+            date_index,
+            "_보고서장소키",
+        ].map(lambda key: f"similar:{find(key)}")
+        normalized.loc[date_index, "현장명"] = normalized.loc[
+            date_index,
+            "_보고서장소키",
+        ].map(lambda key: merged_names.get(key.removeprefix("similar:"), ""))
+
+    return normalized
 
 
 def canonicalize_report_rows(
@@ -797,19 +1107,33 @@ def canonicalize_report_rows(
 ) -> pd.DataFrame:
     """원본 기록을 바꾸지 않고 보고서용 장소 키·명칭을 적용합니다."""
     normalized = records.copy()
+    kakao_key = report_place_api_key()
     site_names = list(dict.fromkeys(
         clean_text(site) for site in normalized["현장명"].tolist()
     ))
     identities = {
-        site: report_site_identity(site)
+        site: report_site_identity(site, kakao_key)
         for site in site_names
     }
+    preferred_names: dict[str, str] = {}
+    for key, display_name in identities.values():
+        current = preferred_names.get(key, "")
+        if not current:
+            preferred_names[key] = display_name
+            continue
+        current_has_cc = current.casefold().endswith("cc")
+        candidate_has_cc = display_name.casefold().endswith("cc")
+        if candidate_has_cc and not current_has_cc:
+            preferred_names[key] = display_name
+        elif candidate_has_cc == current_has_cc and len(display_name) < len(current):
+            preferred_names[key] = display_name
     normalized["_보고서장소키"] = normalized["현장명"].map(
         lambda site: identities[clean_text(site)][0]
     )
     normalized["현장명"] = normalized["현장명"].map(
-        lambda site: identities[clean_text(site)][1]
+        lambda site: preferred_names[identities[clean_text(site)][0]]
     )
+    normalized = merge_similar_report_sites(normalized)
     return normalized
 
 
@@ -3389,8 +3713,23 @@ def report_team_table_text(records: pd.DataFrame, department: str) -> str:
     return "\n".join(f"· {item}" for item in measures) or "조치사항 기록 없음"
 
 
+def report_all_team_table_text(records: pd.DataFrame) -> str:
+    """보고서 표 한 칸에 모든 부서의 시행 조치를 합칩니다."""
+    lines: list[str] = []
+    for department in TEAM_OPTIONS:
+        aliases = {department, f"{department}팀"}
+        if records[records["팀"].isin(aliases)].empty:
+            continue
+        label = f"{department}팀" if department != "기타" else "기타"
+        measure_text = report_team_table_text(records, department)
+        if measure_text == "조치사항 기록 없음":
+            continue
+        lines.append(f"{label}\n{measure_text}")
+    return "\n\n".join(lines) or "조치사항 기록 없음"
+
+
 def fill_report_measure_table(section_xml: str, records: pd.DataFrame) -> str:
-    """새 원본의 3번 표를 실제 존재하는 부서 행으로 채웁니다."""
+    """새 원본의 3번 표를 부서별 행으로 나누지 않고 한 행에 채웁니다."""
     marker_index = section_xml.find("<hp:t>중계팀</hp:t>")
     if marker_index < 0:
         return section_xml
@@ -3404,46 +3743,28 @@ def fill_report_measure_table(section_xml: str, records: pd.DataFrame) -> str:
     if not row_match:
         return section_xml
 
-    departments = [
-        department
-        for department in TEAM_OPTIONS
-        if not records[
-            records["팀"].isin({department, f"{department}팀"})
-        ].empty
-    ]
-    if not departments:
-        departments = ["중계"]
-
     template_row = row_match.group(0)
     rows: list[str] = []
-    for row_index, department in enumerate(departments):
-        values = [
-            f"{department}팀" if department != "기타" else "기타",
-            report_team_table_text(records, department),
-        ]
-        value_index = 0
+    values = ["전체", report_all_team_table_text(records)]
+    value_index = 0
 
-        def replace_cell_text(match: re.Match[str]) -> str:
-            nonlocal value_index
-            value = values[value_index] if value_index < len(values) else ""
-            value_index += 1
-            return f"<hp:t>{html.escape(value, quote=False)}</hp:t>"
+    def replace_cell_text(match: re.Match[str]) -> str:
+        nonlocal value_index
+        value = values[value_index] if value_index < len(values) else ""
+        value_index += 1
+        return f"<hp:t>{html.escape(value, quote=False)}</hp:t>"
 
-        row_xml = re.sub(
-            r"<hp:t>.*?</hp:t>",
-            replace_cell_text,
-            template_row,
-            flags=re.DOTALL,
-        )
-        row_xml = re.sub(
-            r'rowAddr="\d+"',
-            f'rowAddr="{row_index}"',
-            row_xml,
-        )
-        rows.append(row_xml)
+    row_xml = re.sub(
+        r"<hp:t>.*?</hp:t>",
+        replace_cell_text,
+        template_row,
+        flags=re.DOTALL,
+    )
+    row_xml = re.sub(r'rowAddr="\d+"', 'rowAddr="0"', row_xml)
+    rows.append(row_xml)
 
     new_table = table_xml[:row_match.start()] + "".join(rows) + table_xml[row_match.end():]
-    # 기존 두 번째 예시 행은 모두 새 행으로 교체합니다.
+    # 기존 예시 행은 모두 제거하고 한 행만 남깁니다.
     remaining_row = re.search(r"<hp:tr>.*?</hp:tr>", new_table[new_table.find(rows[-1]) + len(rows[-1]):], re.DOTALL)
     if remaining_row:
         offset = new_table.find(rows[-1]) + len(rows[-1])
@@ -3745,24 +4066,24 @@ def make_heat_report_docx_bytes(records: pd.DataFrame) -> bytes:
     )
 
     add_docx_section_heading(document, "3. 폭염 대응 조치")
-    measure_table = document.add_table(rows=max(1, len(departments)), cols=2)
+    measure_table = document.add_table(rows=1, cols=2)
     measure_table.style = "Table Grid"
     measure_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     measure_table.autofit = False
-    active_departments = departments or ["중계"]
-    for row_index, department in enumerate(active_departments):
-        label = f"{department}팀" if department != "기타" else "기타"
-        measure_text = report_team_table_text(records, department)
-        measure_table.rows[row_index].cells[0].width = Inches(1.15)
-        measure_table.rows[row_index].cells[1].width = Inches(4.95)
-        set_docx_cell_shading(measure_table.cell(row_index, 0), "E8EEF5")
-        write_docx_cell(
-            measure_table.cell(row_index, 0),
-            label,
-            bold=True,
-            centered=True,
-        )
-        write_docx_cell(measure_table.cell(row_index, 1), measure_text, size=9.3)
+    measure_table.rows[0].cells[0].width = Inches(1.15)
+    measure_table.rows[0].cells[1].width = Inches(4.95)
+    set_docx_cell_shading(measure_table.cell(0, 0), "E8EEF5")
+    write_docx_cell(
+        measure_table.cell(0, 0),
+        "전체",
+        bold=True,
+        centered=True,
+    )
+    write_docx_cell(
+        measure_table.cell(0, 1),
+        report_all_team_table_text(records),
+        size=9.3,
+    )
 
     if notes:
         add_docx_section_heading(document, "4. 특이사항")
@@ -3812,7 +4133,7 @@ def report_attachment_for_rows(records: pd.DataFrame) -> tuple[str, bytes]:
     )
     report_bytes = cached_heat_report_docx_bytes(
         records_json,
-        "approval-box-v6-sajik-solago-site",
+        "approval-box-v7-sport-region-site-merge",
     )
     return filename, report_bytes
 
@@ -5245,11 +5566,39 @@ def render_records(
 
     st.markdown("### 폭염 보고서 다운로드")
     st.caption(
-        "같은 근무일자와 근무장소의 부서별 기록을 "
+        "같은 근무일자와 근무장소의 기록을 "
         "Word DOCX 보고서 한 장으로 묶습니다."
     )
 
-    report_source = canonicalize_report_rows(filtered)
+    report_source = records.copy()
+    if search_text.strip() and not report_source.empty:
+        keyword = search_text.strip().lower()
+        report_source = report_source[
+            report_source["종목"].astype(str).str.lower().str.contains(
+                keyword,
+                na=False,
+                regex=False,
+            )
+            | report_source["현장명"].astype(str).str.lower().str.contains(
+                keyword,
+                na=False,
+                regex=False,
+            )
+            | report_source["작성자"].astype(str).str.lower().str.contains(
+                keyword,
+                na=False,
+                regex=False,
+            )
+        ]
+    if sport_filter != "전체" and not report_source.empty:
+        report_source = report_source[
+            report_source.apply(
+                lambda row: normalize_sport(row.get("종목"), row.get("현장명")),
+                axis=1,
+            )
+            == sport_filter
+        ]
+    report_source = canonicalize_report_rows(report_source)
     report_source["보고서장소"] = report_source["현장명"]
     report_candidates = (
         report_source[["작업날짜", "_보고서장소키", "보고서장소"]]
@@ -5267,12 +5616,20 @@ def render_records(
     )
     selected_report_index = report_labels.index(selected_report_label)
     selected_report = report_candidates[selected_report_index]
-    report_rows = report_source[
-        (report_source["작업날짜"] == selected_report["작업날짜"])
-        & (
-            report_source["_보고서장소키"]
-            == selected_report["_보고서장소키"]
-        )
+    selected_date = clean_text(selected_report["작업날짜"])
+    date_report_source = records[records["작업날짜"] == selected_date]
+    if sport_filter != "전체" and not date_report_source.empty:
+        date_report_source = date_report_source[
+            date_report_source.apply(
+                lambda row: normalize_sport(row.get("종목"), row.get("현장명")),
+                axis=1,
+            )
+            == sport_filter
+        ]
+    date_report_source = canonicalize_report_rows(date_report_source)
+    report_rows = date_report_source[
+        date_report_source["_보고서장소키"]
+        == selected_report["_보고서장소키"]
     ]
 
     try:
