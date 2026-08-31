@@ -816,7 +816,7 @@ def report_place_api_key() -> str:
         value = clean_text(os.environ.get(env_name))
         if value:
             return value
-    return get_secret(("location", "kakao_rest_api_key"))
+    return clean_text(get_secret(("location", "kakao_rest_api_key"), ""))
 
 
 REPORT_SITE_ALIAS_RULES = (
@@ -1277,14 +1277,20 @@ def markdown_escape(value: Any) -> str:
     )
 
 
-def get_secret(path: tuple[str, ...], default: str = "") -> str:
+def get_secret(path: tuple[str, ...], default: Any = "") -> Any:
     try:
         current: Any = st.secrets
         for key in path:
             current = current[key]
+        if hasattr(current, "items") or isinstance(current, (list, tuple)):
+            return current
         return clean_text(current)
     except (KeyError, TypeError):
         return default
+    except Exception as exc:
+        if exc.__class__.__name__ == "StreamlitSecretNotFoundError":
+            return default
+        raise
 
 
 def time_state_key(field: str, nonce: int) -> str:
@@ -1373,9 +1379,8 @@ def restore_weather_result_cache(nonce: int) -> bool:
 
 def get_site_coordinates(site_name: str) -> tuple[float, float] | None:
     """Streamlit Secrets에서 현장명의 위도·경도를 찾습니다."""
-    try:
-        sites = st.secrets["weather"]["sites"]
-    except (KeyError, TypeError):
+    sites = get_secret(("weather", "sites"), default=None)
+    if not hasattr(sites, "items"):
         return None
 
     target = clean_text(site_name).casefold()
