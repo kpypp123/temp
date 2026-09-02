@@ -39,7 +39,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.61 · 2026-09-02"
+APP_VERSION = "Professional UI v3.62 · 2026-09-02"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -2678,6 +2678,7 @@ def record_heat_start_with_weather(
         grid_result: dict[str, Any] | None = None
         regional_result: dict[str, Any] | None = None
         range_errors: list[str] = []
+        use_regional_fallback = selected_date >= datetime.now(KST).date()
 
         try:
             grid_result = fetch_kma_apparent_temperature_range(
@@ -2699,24 +2700,34 @@ def record_heat_start_with_weather(
                 level="error",
             )
 
-        try:
-            regional_result = fetch_kma_regional_apparent_temperature_range(
-                coordinates[0],
-                coordinates[1],
-                auth_key,
-                range_start,
-                range_end,
-                debug_nonce=nonce,
-            )
-        except Exception as error:  # noqa: BLE001
-            range_errors.append(f"초단기실황: {error}")
+        if use_regional_fallback:
+            try:
+                regional_result = fetch_kma_regional_apparent_temperature_range(
+                    coordinates[0],
+                    coordinates[1],
+                    auth_key,
+                    range_start,
+                    range_end,
+                    debug_nonce=nonce,
+                )
+            except Exception as error:  # noqa: BLE001
+                range_errors.append(f"초단기실황: {error}")
+                add_weather_debug_log(
+                    nonce,
+                    (
+                        f"지역실황 소스 예외 종료 | type={type(error).__name__} | "
+                        f"message={error}"
+                    ),
+                    level="error",
+                )
+        else:
             add_weather_debug_log(
                 nonce,
                 (
-                    f"지역실황 소스 예외 종료 | type={type(error).__name__} | "
-                    f"message={error}"
+                    "지역실황 생략 | 지난 날짜는 초단기실황 대신 "
+                    "과거 재분석 보조조회로 진행"
                 ),
-                level="error",
+                level="warning",
             )
 
         available_results = [
