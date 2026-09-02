@@ -11,62 +11,13 @@ import math
 import os
 import re
 import smtplib
+import socket
 import urllib.parse
 import urllib.request
 import urllib.error
 import uuid
 import time as time_module
 import zipfile
-import socket
-import time
-import urllib.request
-import socket
-def test_kma_network():
-    results = []
-
-    # 1. DNS 확인
-    try:
-        ip = socket.gethostbyname("apihub.kma.go.kr")
-        results.append(f"DNS 정상: {ip}")
-    except Exception as e:
-        results.append(f"DNS 실패: {type(e).__name__}: {e}")
-        return results
-
-    # 2. HTTPS 홈페이지 연결
-    try:
-        started = time.perf_counter()
-        req = urllib.request.Request(
-            "https://apihub.kma.go.kr/",
-            headers={"User-Agent": "checktemp-streamlit/1.0"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            elapsed = time.perf_counter() - started
-            results.append(
-                f"기상청 HTTPS 정상: HTTP {response.status}, {elapsed:.2f}초"
-            )
-    except Exception as e:
-        results.append(
-            f"기상청 HTTPS 실패: {type(e).__name__}: {e}"
-        )
-
-    # 3. 다른 외부 서버 비교
-    try:
-        started = time.perf_counter()
-        req = urllib.request.Request(
-            "https://api.open-meteo.com/",
-            headers={"User-Agent": "checktemp-streamlit/1.0"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            elapsed = time.perf_counter() - started
-            results.append(
-                f"Open-Meteo HTTPS 정상: HTTP {response.status}, {elapsed:.2f}초"
-            )
-    except Exception as e:
-        results.append(
-            f"Open-Meteo HTTPS 실패: {type(e).__name__}: {e}"
-        )
-
-    return results
 from collections.abc import Mapping
 from pathlib import Path
 from datetime import date, datetime, time, timedelta
@@ -372,6 +323,49 @@ def safe_error_body(error: urllib.error.HTTPError) -> str:
         except Exception:
             continue
     return repr(payload[:500])
+
+
+def test_kma_network() -> list[str]:
+    """현재 Streamlit 실행 서버에서 기상청 APIHub와 Open-Meteo 연결 상태를 진단합니다."""
+    results: list[str] = []
+
+    # 1. DNS 확인
+    try:
+        ip = socket.gethostbyname("apihub.kma.go.kr")
+        results.append(f"DNS 정상: {ip}")
+    except Exception as error:  # noqa: BLE001
+        results.append(f"DNS 실패: {type(error).__name__}: {error}")
+        return results
+
+    # 2. 기상청 HTTPS 연결 확인
+    try:
+        started = time_module.perf_counter()
+        request = urllib.request.Request(
+            "https://apihub.kma.go.kr/",
+            headers={"User-Agent": "checktemp-streamlit/1.0"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            elapsed = time_module.perf_counter() - started
+            status = getattr(response, "status", None) or response.getcode()
+        results.append(f"기상청 HTTPS 정상: HTTP {status}, {elapsed:.2f}초")
+    except Exception as error:  # noqa: BLE001
+        results.append(f"기상청 HTTPS 실패: {type(error).__name__}: {error}")
+
+    # 3. Open-Meteo 연결 비교
+    try:
+        started = time_module.perf_counter()
+        request = urllib.request.Request(
+            "https://api.open-meteo.com/",
+            headers={"User-Agent": "checktemp-streamlit/1.0"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            elapsed = time_module.perf_counter() - started
+            status = getattr(response, "status", None) or response.getcode()
+        results.append(f"Open-Meteo HTTPS 정상: HTTP {status}, {elapsed:.2f}초")
+    except Exception as error:  # noqa: BLE001
+        results.append(f"Open-Meteo HTTPS 실패: {type(error).__name__}: {error}")
+
+    return results
 
 
 st.set_page_config(
@@ -5360,6 +5354,23 @@ def render_form(
                     language="text",
                 )
 
+
+
+        with st.expander("기상청 네트워크 테스트", expanded=False):
+            st.caption(
+                "현재 Streamlit 실행 서버에서 기상청 APIHub와 "
+                "Open-Meteo 연결 상태를 직접 확인합니다."
+            )
+            if st.button(
+                "네트워크 테스트 실행",
+                key=f"kma_network_test_{nonce}",
+            ):
+                with st.spinner("외부 서버 연결 상태를 확인하고 있습니다..."):
+                    network_results = test_kma_network()
+
+                for network_result in network_results:
+                    st.code(network_result, language="text")
+
         is_forecast_entry = work_date > datetime.now(KST).date()
         if is_forecast_entry:
             st.info(
@@ -6212,5 +6223,3 @@ else:
         records_df,
         connection_error,
     )
-
-
