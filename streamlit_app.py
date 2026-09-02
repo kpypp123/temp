@@ -1343,6 +1343,163 @@ def get_secret(path: tuple[str, ...], default: Any = "") -> Any:
         raise
 
 
+def decode_kma_payload(payload: bytes) -> str:
+    for encoding in ("utf-8", "euc-kr"):
+        try:
+            return payload.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return payload.decode("utf-8", errors="replace")
+
+
+def fetch_via_gas_proxy(
+    endpoint_url: str,
+    params: dict[str, str],
+    *,
+    timeout: int,
+    debug_nonce: int | None = None,
+    label: str = "KMA",
+) -> tuple[bytes, int, float]:
+    gas_proxy_url = get_secret(("weather", "gas_proxy_url"))
+    gas_proxy_token = get_secret(("weather", "gas_proxy_token"))
+    if not gas_proxy_url or not gas_proxy_token:
+        raise ValueError("GAS Proxy 설정이 없습니다.")
+
+    proxy_params = {
+        "token": gas_proxy_token,
+        "target_url": endpoint_url,
+        "url": endpoint_url,
+        "endpoint": endpoint_url,
+        **{key: value for key, value in params.items() if key != "authKey"},
+    }
+    request_url = f"{gas_proxy_url}?{urllib.parse.urlencode(proxy_params)}"
+    request = urllib.request.Request(
+        request_url,
+        headers={"User-Agent": "checktemp-streamlit/1.0"},
+    )
+
+    add_weather_debug_log(debug_nonce, f"{label} 요청 경로 | GAS Proxy")
+    started = time_module.perf_counter()
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = response.read()
+        elapsed = time_module.perf_counter() - started
+        status = getattr(response, "status", None) or response.getcode()
+
+    response_text = payload.decode("utf-8", errors="replace").strip()
+    try:
+        wrapped = json.loads(response_text)
+    except json.JSONDecodeError:
+        wrapped = None
+
+    if isinstance(wrapped, dict):
+        ok = wrapped.get("ok")
+        proxy_status = wrapped.get("status", wrapped.get("statusCode", status))
+        if ok is False or int(proxy_status or 0) >= 400:
+            message = (
+                clean_text(wrapped.get("message"))
+                or clean_text(wrapped.get("error"))
+                or f"GAS Proxy status={proxy_status}"
+            )
+            raise RuntimeError(message)
+
+        if wrapped.get("bodyBase64"):
+            payload = base64.b64decode(clean_text(wrapped.get("bodyBase64")))
+        else:
+            body = (
+                wrapped.get("body")
+                if "body" in wrapped
+                else wrapped.get(
+                    "bodyText",
+                    wrapped.get("text", wrapped.get("content", wrapped.get("data"))),
+                )
+            )
+            if body is not None:
+                if isinstance(body, (dict, list)):
+                    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                else:
+                    payload = str(body).encode("utf-8")
+
+    add_weather_debug_log(
+        debug_nonce,
+        f"GAS Proxy 성공 | status={status} | elapsed={elapsed:.2f}s | bytes={len(payload)}",
+    )
+    return payload, int(status), elapsed
+
+
+def fetch_kma_direct(
+    endpoint_url: str,
+    params: dict[str, str],
+    *,
+    auth_key: str,
+    timeout: int,
+    debug_nonce: int | None = None,
+    label: str = "KMA",
+) -> tuple[bytes, int, float]:
+    if not auth_key:
+        raise ValueError("KMA 직접 호출용 인증키가 없습니다.")
+    direct_params = {**params, "authKey": auth_key}
+    request = urllib.request.Request(
+        f"{endpoint_url}?{urllib.parse.urlencode(direct_params)}",
+        headers={"User-Agent": "checktemp-streamlit/1.0"},
+    )
+    add_weather_debug_log(debug_nonce, f"{label} 요청 경로 | KMA 직접 호출")
+    started = time_module.perf_counter()
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = response.read()
+        elapsed = time_module.perf_counter() - started
+        status = getattr(response, "status", None) or response.getcode()
+    return payload, int(status), elapsed
+
+
+def fetch_kma_with_fallback(
+    endpoint_url: str,
+    params: dict[str, str],
+    *,
+    auth_key: str,
+    timeout: int,
+    debug_nonce: int | None = None,
+    label: str = "KMA",
+) -> tuple[bytes, int, float, str]:
+    try:
+        payload, status, elapsed = fetch_via_gas_proxy(
+            endpoint_url,
+            params,
+            timeout=timeout,
+            debug_nonce=debug_nonce,
+            label=label,
+        )
+        return payload, status, elapsed, "GAS Proxy"
+    except Exception as error:  # noqa: BLE001
+        add_weather_debug_log(
+            debug_nonce,
+            f"GAS Proxy 실패 | {label} | type={type(error).__name__} | message={error}",
+            level="error",
+        )
+
+    add_weather_debug_log(debug_nonce, "KMA 직접 호출 fallback 시작")
+    try:
+        payload, status, elapsed = fetch_kma_direct(
+            endpoint_url,
+            params,
+            auth_key=auth_key,
+            timeout=timeout,
+            debug_nonce=debug_nonce,
+            label=label,
+        )
+        add_weather_debug_log(
+            debug_nonce,
+            f"KMA 직접 호출 성공 | {label} | status={status} | elapsed={elapsed:.2f}s | bytes={len(payload)}",
+        )
+        return payload, status, elapsed, "KMA 직접 호출"
+    except Exception as error:  # noqa: BLE001
+        add_weather_debug_log(
+            debug_nonce,
+            f"KMA 직접 호출 실패 | {label} | type={type(error).__name__} | message={error}",
+            level="error",
+        )
+        raise
+
+
 def time_state_key(field: str, nonce: int) -> str:
     return f"time_{field}_{nonce}"
 
@@ -1545,33 +1702,22 @@ def fetch_kma_apparent_temperature(
         minutes=(current_time.minute % 5) + 10
     )
     query_start = query_end - timedelta(minutes=55)
-    params = urllib.parse.urlencode(
-        {
-            "obs": "ta_chi",
-            "tm1": query_start.strftime("%Y%m%d%H%M"),
-            "tm2": query_end.strftime("%Y%m%d%H%M"),
-            "itv": "5",
-            "lon": f"{longitude:.6f}",
-            "lat": f"{latitude:.6f}",
-            "authKey": auth_key,
-        }
+    params = {
+        "obs": "ta_chi",
+        "tm1": query_start.strftime("%Y%m%d%H%M"),
+        "tm2": query_end.strftime("%Y%m%d%H%M"),
+        "itv": "5",
+        "lon": f"{longitude:.6f}",
+        "lat": f"{latitude:.6f}",
+    }
+    payload, _, _, _ = fetch_kma_with_fallback(
+        KMA_POINT_API_URL,
+        params,
+        auth_key=auth_key,
+        timeout=8,
+        label="500m 단건",
     )
-    request = urllib.request.Request(
-        f"{KMA_POINT_API_URL}?{params}",
-        headers={"User-Agent": "checktemp-streamlit/1.0"},
-    )
-
-    with urllib.request.urlopen(request, timeout=8) as response:
-        payload = response.read()
-
-    for encoding in ("utf-8", "euc-kr"):
-        try:
-            response_text = payload.decode(encoding)
-            break
-        except UnicodeDecodeError:
-            continue
-    else:
-        response_text = payload.decode("utf-8", errors="replace")
+    response_text = decode_kma_payload(payload)
 
     return parse_kma_temperature_response(response_text)
 
@@ -1630,22 +1776,14 @@ def fetch_kma_apparent_temperature_range(
             f"{chunk_end.strftime('%H:%M')}"
         )
 
-        params = urllib.parse.urlencode(
-            {
-                "obs": "ta_chi",
-                "tm1": chunk_start.strftime("%Y%m%d%H%M"),
-                "tm2": chunk_end.strftime("%Y%m%d%H%M"),
-                "itv": "5",
-                "lon": f"{longitude:.6f}",
-                "lat": f"{latitude:.6f}",
-                "authKey": auth_key,
-            }
-        )
-
-        request = urllib.request.Request(
-            f"{KMA_POINT_API_URL}?{params}",
-            headers={"User-Agent": "checktemp-streamlit/1.0"},
-        )
+        params = {
+            "obs": "ta_chi",
+            "tm1": chunk_start.strftime("%Y%m%d%H%M"),
+            "tm2": chunk_end.strftime("%Y%m%d%H%M"),
+            "itv": "5",
+            "lon": f"{longitude:.6f}",
+            "lat": f"{latitude:.6f}",
+        }
 
         add_weather_debug_log(
             debug_nonce,
@@ -1660,18 +1798,19 @@ def fetch_kma_apparent_temperature_range(
         network_timeout = False
 
         try:
-            with urllib.request.urlopen(
-                request,
+            payload, status, elapsed, route = fetch_kma_with_fallback(
+                KMA_POINT_API_URL,
+                params,
+                auth_key=auth_key,
                 timeout=KMA_POINT_RANGE_TIMEOUT_SECONDS,
-            ) as response:
-                payload = response.read()
-                elapsed = time_module.perf_counter() - started
-                status = getattr(response, "status", None) or response.getcode()
+                debug_nonce=debug_nonce,
+                label=f"500m 구간 {chunk_label}",
+            )
 
             add_weather_debug_log(
                 debug_nonce,
                 (
-                    f"500m 구간 성공 | {chunk_label} | status={status} | "
+                    f"500m 구간 성공 | {chunk_label} | route={route} | status={status} | "
                     f"elapsed={elapsed:.2f}s | bytes={len(payload)}"
                 ),
             )
@@ -1724,19 +1863,7 @@ def fetch_kma_apparent_temperature_range(
             )
 
         if payload is not None:
-            response_text = ""
-            for encoding in ("utf-8", "euc-kr"):
-                try:
-                    response_text = payload.decode(encoding)
-                    break
-                except UnicodeDecodeError:
-                    continue
-
-            if not response_text:
-                response_text = payload.decode(
-                    "utf-8",
-                    errors="replace",
-                )
+            response_text = decode_kma_payload(payload)
 
             try:
                 chunk_observations = parse_kma_temperature_observations(
@@ -1933,25 +2060,23 @@ def fetch_kma_forecast_apparent_temperature_range(
     """단기예보로 근무시간의 예상 체감온도와 예상 폭염시간을 구합니다."""
     grid_x, grid_y = latitude_longitude_to_grid(latitude, longitude)
     base_time = latest_village_forecast_base(datetime.now(KST))
-    params = urllib.parse.urlencode(
-        {
-            "pageNo": "1",
-            "numOfRows": "2000",
-            "dataType": "JSON",
-            "base_date": base_time.strftime("%Y%m%d"),
-            "base_time": base_time.strftime("%H%M"),
-            "nx": str(grid_x),
-            "ny": str(grid_y),
-            "authKey": auth_key,
-        }
+    params = {
+        "pageNo": "1",
+        "numOfRows": "2000",
+        "dataType": "JSON",
+        "base_date": base_time.strftime("%Y%m%d"),
+        "base_time": base_time.strftime("%H%M"),
+        "nx": str(grid_x),
+        "ny": str(grid_y),
+    }
+    payload, _, _, _ = fetch_kma_with_fallback(
+        KMA_VILLAGE_FORECAST_API_URL,
+        params,
+        auth_key=auth_key,
+        timeout=20,
+        label="단기예보",
     )
-    request = urllib.request.Request(
-        f"{KMA_VILLAGE_FORECAST_API_URL}?{params}",
-        headers={"User-Agent": "checktemp-streamlit/1.0"},
-    )
-
-    with urllib.request.urlopen(request, timeout=20) as response:
-        result = json.loads(response.read().decode("utf-8"))
+    result = json.loads(payload.decode("utf-8"))
 
     response_body = result.get("response") or {}
     header = response_body.get("header") or {}
@@ -2044,40 +2169,34 @@ def fetch_kma_regional_apparent_temperature_at(
         microsecond=0,
     )
 
-    params = urllib.parse.urlencode(
-        {
-            "pageNo": "1",
-            "numOfRows": "1000",
-            "dataType": "JSON",
-            "base_date": base_time.strftime("%Y%m%d"),
-            "base_time": base_time.strftime("%H%M"),
-            "nx": str(grid_x),
-            "ny": str(grid_y),
-            "authKey": auth_key,
-        }
-    )
-
-    request = urllib.request.Request(
-        f"{KMA_ULTRA_NOWCAST_API_URL}?{params}",
-        headers={"User-Agent": "checktemp-streamlit/1.0"},
-    )
+    params = {
+        "pageNo": "1",
+        "numOfRows": "1000",
+        "dataType": "JSON",
+        "base_date": base_time.strftime("%Y%m%d"),
+        "base_time": base_time.strftime("%H%M"),
+        "nx": str(grid_x),
+        "ny": str(grid_y),
+    }
 
     started = time_module.perf_counter()
 
     try:
-        with urllib.request.urlopen(
-            request,
+        payload, status, elapsed, route = fetch_kma_with_fallback(
+            KMA_ULTRA_NOWCAST_API_URL,
+            params,
+            auth_key=auth_key,
             timeout=KMA_REGIONAL_TIMEOUT_SECONDS,
-        ) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            elapsed = time_module.perf_counter() - started
-            status = getattr(response, "status", None) or response.getcode()
+            debug_nonce=debug_nonce,
+            label=f"초단기실황 {base_time.strftime('%Y%m%d %H:%M')}",
+        )
+        result = json.loads(payload.decode("utf-8"))
 
         add_weather_debug_log(
             debug_nonce,
             (
                 f"지역실황 HTTP 성공 | base={base_time.strftime('%Y%m%d %H:%M')} | "
-                f"status={status} | elapsed={elapsed:.2f}s"
+                f"route={route} | status={status} | elapsed={elapsed:.2f}s"
             ),
         )
 
@@ -2432,26 +2551,25 @@ def fetch_kma_regional_apparent_temperature(
     last_error = "조회 가능한 초단기실황이 없습니다."
     for hours_back in range(4):
         base_time = latest_candidate - timedelta(hours=hours_back)
-        params = urllib.parse.urlencode(
-            {
-                "pageNo": "1",
-                "numOfRows": "1000",
-                "dataType": "JSON",
-                "base_date": base_time.strftime("%Y%m%d"),
-                "base_time": base_time.strftime("%H%M"),
-                "nx": str(grid_x),
-                "ny": str(grid_y),
-                "authKey": auth_key,
-            }
-        )
-        request = urllib.request.Request(
-            f"{KMA_ULTRA_NOWCAST_API_URL}?{params}",
-            headers={"User-Agent": "checktemp-streamlit/1.0"},
-        )
+        params = {
+            "pageNo": "1",
+            "numOfRows": "1000",
+            "dataType": "JSON",
+            "base_date": base_time.strftime("%Y%m%d"),
+            "base_time": base_time.strftime("%H%M"),
+            "nx": str(grid_x),
+            "ny": str(grid_y),
+        }
 
         try:
-            with urllib.request.urlopen(request, timeout=8) as response:
-                result = json.loads(response.read().decode("utf-8"))
+            payload, _, _, _ = fetch_kma_with_fallback(
+                KMA_ULTRA_NOWCAST_API_URL,
+                params,
+                auth_key=auth_key,
+                timeout=8,
+                label=f"초단기실황 단건 {base_time.strftime('%Y%m%d %H:%M')}",
+            )
+            result = json.loads(payload.decode("utf-8"))
             response_body = result.get("response") or {}
             header = response_body.get("header") or {}
             if clean_text(header.get("resultCode")) != "00":
@@ -2513,10 +2631,12 @@ def record_heat_start_with_weather(
         return
 
     auth_key = get_secret(("weather", "kma_auth_key"))
-    if not auth_key:
+    gas_proxy_url = get_secret(("weather", "gas_proxy_url"))
+    gas_proxy_token = get_secret(("weather", "gas_proxy_token"))
+    if not auth_key and not (gas_proxy_url and gas_proxy_token):
         st.session_state[notice_key] = (
             "info",
-            "기상청 인증키가 아직 설정되지 않아 시간만 기록했습니다.",
+            "기상청 인증키 또는 GAS Proxy 설정이 없어 시간만 기록했습니다.",
         )
         return
 
@@ -2782,6 +2902,11 @@ def record_heat_start_with_weather(
 
         archive_result: dict[str, Any] | None = None
         if not available_results:
+            add_weather_debug_log(
+                nonce,
+                "Open-Meteo fallback 시작",
+                level="warning",
+            )
             try:
                 archive_result = (
                     fetch_open_meteo_archive_apparent_temperature_range(
