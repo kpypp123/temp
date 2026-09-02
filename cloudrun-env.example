@@ -1,0 +1,16 @@
+# 실제 비밀값을 이 파일에 넣어 GitHub에 커밋하지 마세요.
+# 아래는 Cloud Run에서 설정할 환경변수/Secret Manager 항목 이름 예시입니다.
+
+APP_SPREADSHEET_URL=https://docs.google.com/spreadsheets/d/...
+APP_WORKSHEET=records
+WEATHER_KMA_AUTH_KEY=KMA_API_KEY
+LOCATION_KAKAO_REST_API_KEY=KAKAO_REST_API_KEY
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+
+# 선택: 등록 현장 좌표를 JSON으로 유지하고 싶을 때
+# WEATHER_SITES={"현장명":{"lat":37.0,"lon":127.0}}
+
+# 메일 기능 사용 시
+# MAIL_SENDER=
+# MAIL_APP_PASSWORD=
+# MAIL_RECIPIENTS=
