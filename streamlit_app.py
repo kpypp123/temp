@@ -17,6 +17,56 @@ import urllib.error
 import uuid
 import time as time_module
 import zipfile
+import socket
+import time
+import urllib.request
+import socket
+def test_kma_network():
+    results = []
+
+    # 1. DNS 확인
+    try:
+        ip = socket.gethostbyname("apihub.kma.go.kr")
+        results.append(f"DNS 정상: {ip}")
+    except Exception as e:
+        results.append(f"DNS 실패: {type(e).__name__}: {e}")
+        return results
+
+    # 2. HTTPS 홈페이지 연결
+    try:
+        started = time.perf_counter()
+        req = urllib.request.Request(
+            "https://apihub.kma.go.kr/",
+            headers={"User-Agent": "checktemp-streamlit/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            elapsed = time.perf_counter() - started
+            results.append(
+                f"기상청 HTTPS 정상: HTTP {response.status}, {elapsed:.2f}초"
+            )
+    except Exception as e:
+        results.append(
+            f"기상청 HTTPS 실패: {type(e).__name__}: {e}"
+        )
+
+    # 3. 다른 외부 서버 비교
+    try:
+        started = time.perf_counter()
+        req = urllib.request.Request(
+            "https://api.open-meteo.com/",
+            headers={"User-Agent": "checktemp-streamlit/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            elapsed = time.perf_counter() - started
+            results.append(
+                f"Open-Meteo HTTPS 정상: HTTP {response.status}, {elapsed:.2f}초"
+            )
+    except Exception as e:
+        results.append(
+            f"Open-Meteo HTTPS 실패: {type(e).__name__}: {e}"
+        )
+
+    return results
 from collections.abc import Mapping
 from pathlib import Path
 from datetime import date, datetime, time, timedelta
