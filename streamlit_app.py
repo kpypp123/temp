@@ -39,7 +39,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.59 · 2026-08-12"
+APP_VERSION = "Professional UI v3.60 · 2026-09-02"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -60,6 +60,10 @@ KMA_VILLAGE_FORECAST_API_URL = (
 )
 KAKAO_PLACE_API_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 FORECAST_HEAT_THRESHOLD = 31.0
+KMA_POINT_RANGE_TIMEOUT_SECONDS = 15
+KMA_POINT_RANGE_MAX_CONSECUTIVE_TIMEOUTS = 3
+KMA_REGIONAL_TIMEOUT_SECONDS = 12
+KMA_REGIONAL_MAX_INITIAL_FAILURES = 3
 
 OLD_CURRENT_COLUMNS = [
     "id",
@@ -1538,7 +1542,7 @@ def fetch_kma_apparent_temperature_range(
     """500m 격자 체감온도를 55분 이하 구간으로 독립 조회합니다.
 
     일부 구간이 실패해도 성공한 관측값은 보존합니다.
-    연속 네트워크 타임아웃이 2회 발생하면 500m 조회를 중단하고
+    연속 네트워크 타임아웃이 여러 차례 발생하면 500m 조회를 중단하고
     초단기실황 조회로 넘어갈 수 있도록 부분 결과를 반환합니다.
     """
     now = datetime.now(KST).replace(second=0, microsecond=0)
@@ -1601,7 +1605,7 @@ def fetch_kma_apparent_temperature_range(
             debug_nonce,
             (
                 f"500m 구간 요청 {requested_chunks} | {chunk_label} | "
-                "timeout=8s"
+                f"timeout={KMA_POINT_RANGE_TIMEOUT_SECONDS}s"
             ),
         )
 
@@ -1610,7 +1614,10 @@ def fetch_kma_apparent_temperature_range(
         network_timeout = False
 
         try:
-            with urllib.request.urlopen(request, timeout=8) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=KMA_POINT_RANGE_TIMEOUT_SECONDS,
+            ) as response:
                 payload = response.read()
                 elapsed = time_module.perf_counter() - started
                 status = getattr(response, "status", None) or response.getcode()
@@ -1714,11 +1721,16 @@ def fetch_kma_apparent_temperature_range(
                 )
 
         # 서버가 연속으로 응답하지 않으면 이후 구간까지 오래 기다리지 않습니다.
-        if network_timeout and consecutive_timeouts >= 2:
+        if (
+            network_timeout
+            and consecutive_timeouts >= KMA_POINT_RANGE_MAX_CONSECUTIVE_TIMEOUTS
+        ):
             add_weather_debug_log(
                 debug_nonce,
                 (
-                    "500m 회로차단 | 연속 2개 구간 타임아웃으로 "
+                    "500m 회로차단 | "
+                    f"연속 {KMA_POINT_RANGE_MAX_CONSECUTIVE_TIMEOUTS}개 "
+                    "구간 타임아웃으로 "
                     "나머지 500m 조회를 중단하고 지역실황으로 진행"
                 ),
                 level="warning",
@@ -2007,7 +2019,10 @@ def fetch_kma_regional_apparent_temperature_at(
     started = time_module.perf_counter()
 
     try:
-        with urllib.request.urlopen(request, timeout=6) as response:
+        with urllib.request.urlopen(
+            request,
+            timeout=KMA_REGIONAL_TIMEOUT_SECONDS,
+        ) as response:
             result = json.loads(response.read().decode("utf-8"))
             elapsed = time_module.perf_counter() - started
             status = getattr(response, "status", None) or response.getcode()
@@ -2180,11 +2195,16 @@ def fetch_kma_regional_apparent_temperature_range(
 
             # 지역실황 서버 자체가 연속으로 응답하지 않을 때도
             # 지나치게 오래 대기하지 않습니다.
-            if consecutive_failures >= 2 and not apparent_values:
+            if (
+                consecutive_failures >= KMA_REGIONAL_MAX_INITIAL_FAILURES
+                and not apparent_values
+            ):
                 add_weather_debug_log(
                     debug_nonce,
                     (
-                        "지역실황 회로차단 | 첫 2개 시간 연속 실패로 "
+                        "지역실황 회로차단 | "
+                        f"첫 {KMA_REGIONAL_MAX_INITIAL_FAILURES}개 시간 "
+                        "연속 실패로 "
                         "나머지 시간 조회 중단"
                     ),
                     level="warning",
