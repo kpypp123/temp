@@ -39,7 +39,7 @@ from openpyxl.utils import get_column_letter
 
 
 APP_TITLE = "폭염대비 온열질환 예방을 위한 조치사항"
-APP_VERSION = "Professional UI v3.60 · 2026-09-02"
+APP_VERSION = "Professional UI v3.61 · 2026-09-02"
 WORKSHEET_DEFAULT = "records"
 SPREADSHEET_URL_FALLBACK = (
     "https://docs.google.com/spreadsheets/d/"
@@ -58,12 +58,14 @@ KMA_VILLAGE_FORECAST_API_URL = (
     "https://apihub.kma.go.kr/api/typ02/openApi/"
     "VilageFcstInfoService_2.0/getVilageFcst"
 )
+OPEN_METEO_ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
 KAKAO_PLACE_API_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 FORECAST_HEAT_THRESHOLD = 31.0
 KMA_POINT_RANGE_TIMEOUT_SECONDS = 15
 KMA_POINT_RANGE_MAX_CONSECUTIVE_TIMEOUTS = 3
 KMA_REGIONAL_TIMEOUT_SECONDS = 12
 KMA_REGIONAL_MAX_INITIAL_FAILURES = 3
+OPEN_METEO_ARCHIVE_TIMEOUT_SECONDS = 15
 
 OLD_CURRENT_COLUMNS = [
     "id",
@@ -2257,6 +2259,120 @@ def fetch_kma_regional_apparent_temperature_range(
     }
 
 
+def fetch_open_meteo_archive_apparent_temperature_range(
+    latitude: float,
+    longitude: float,
+    range_start: datetime,
+    range_end: datetime,
+    *,
+    debug_nonce: int | None = None,
+) -> dict[str, Any]:
+    """기상청 조회가 모두 실패했을 때 쓰는 과거 체감온도 보조 조회입니다."""
+    actual_end = min(range_end, datetime.now(KST).replace(second=0, microsecond=0))
+    if actual_end < range_start:
+        raise ValueError("조회할 시간대가 없습니다.")
+
+    params = urllib.parse.urlencode(
+        {
+            "latitude": f"{latitude:.6f}",
+            "longitude": f"{longitude:.6f}",
+            "start_date": range_start.strftime("%Y-%m-%d"),
+            "end_date": actual_end.strftime("%Y-%m-%d"),
+            "hourly": "apparent_temperature",
+            "timezone": "Asia/Seoul",
+            "cell_selection": "nearest",
+        }
+    )
+    request = urllib.request.Request(
+        f"{OPEN_METEO_ARCHIVE_API_URL}?{params}",
+        headers={"User-Agent": "checktemp-streamlit/1.0"},
+    )
+
+    add_weather_debug_log(
+        debug_nonce,
+        (
+            "Open-Meteo 보조조회 시작 | "
+            f"range={range_start.strftime('%Y-%m-%d %H:%M')}"
+            f"~{actual_end.strftime('%Y-%m-%d %H:%M')} | "
+            f"timeout={OPEN_METEO_ARCHIVE_TIMEOUT_SECONDS}s"
+        ),
+    )
+
+    started = time_module.perf_counter()
+    with urllib.request.urlopen(
+        request,
+        timeout=OPEN_METEO_ARCHIVE_TIMEOUT_SECONDS,
+    ) as response:
+        result = json.loads(response.read().decode("utf-8"))
+        elapsed = time_module.perf_counter() - started
+        status = getattr(response, "status", None) or response.getcode()
+
+    hourly = result.get("hourly") or {}
+    times = hourly.get("time") or []
+    values = hourly.get("apparent_temperature") or []
+    observations: list[float] = []
+
+    for timestamp, value in zip(times, values):
+        if value is None:
+            continue
+        try:
+            observed_at = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M").replace(
+                tzinfo=KST
+            )
+        except ValueError:
+            continue
+        if not (range_start <= observed_at <= actual_end):
+            continue
+        temperature = parse_float(value)
+        if temperature is not None:
+            observations.append(temperature)
+
+    if not observations:
+        add_weather_debug_log(
+            debug_nonce,
+            (
+                "Open-Meteo 보조조회 결과 없음 | "
+                f"status={status} | elapsed={elapsed:.2f}s"
+            ),
+            level="warning",
+        )
+        return {
+            "available": False,
+            "source": "Open-Meteo 재분석",
+            "minimum": None,
+            "maximum": None,
+            "actual_end": actual_end.strftime("%H:%M"),
+            "observations": 0,
+            "requested": len(times),
+            "successful": 0,
+            "failed": [],
+        }
+
+    minimum = min(observations)
+    maximum = max(observations)
+
+    add_weather_debug_log(
+        debug_nonce,
+        (
+            f"Open-Meteo 보조조회 완료 | min={minimum:.1f} | "
+            f"max={maximum:.1f} | observations={len(observations)} | "
+            f"status={status} | elapsed={elapsed:.2f}s"
+        ),
+    )
+
+    return {
+        "available": True,
+        "source": "Open-Meteo 재분석",
+        "minimum": minimum,
+        "maximum": maximum,
+        "actual_end": actual_end.strftime("%H:%M"),
+        "observations": len(observations),
+        "requested": len(times),
+        "successful": len(observations),
+        "failed": [],
+    }
+
+
 def fetch_kma_regional_apparent_temperature(
     latitude: float,
     longitude: float,
@@ -2609,6 +2725,32 @@ def record_heat_start_with_weather(
             if result and result.get("available")
         ]
 
+        archive_result: dict[str, Any] | None = None
+        if not available_results:
+            try:
+                archive_result = (
+                    fetch_open_meteo_archive_apparent_temperature_range(
+                        coordinates[0],
+                        coordinates[1],
+                        range_start,
+                        range_end,
+                        debug_nonce=nonce,
+                    )
+                )
+            except Exception as error:  # noqa: BLE001
+                range_errors.append(f"Open-Meteo 재분석: {error}")
+                add_weather_debug_log(
+                    nonce,
+                    (
+                        "Open-Meteo 보조조회 예외 종료 | "
+                        f"type={type(error).__name__} | message={error}"
+                    ),
+                    level="error",
+                )
+
+            if archive_result and archive_result.get("available"):
+                available_results.append(archive_result)
+
         if not available_results:
             error_detail = (
                 " / ".join(range_errors)
@@ -2694,6 +2836,24 @@ def record_heat_start_with_weather(
                 )
             else:
                 source_details.append("초단기실황 조회 실패")
+
+        if archive_result:
+            if archive_result.get("available"):
+                archive_min = format_number(float(archive_result["minimum"]))
+                archive_max = format_number(float(archive_result["maximum"]))
+                archive_range = (
+                    archive_min
+                    if archive_min == archive_max
+                    else f"{archive_min}~{archive_max}"
+                )
+                source_details.append(
+                    "Open-Meteo 재분석 "
+                    f"{archive_range}℃ "
+                    f"({archive_result['observations']}개 시간자료, "
+                    "기상청 장애 시 보조값)"
+                )
+            else:
+                source_details.append("Open-Meteo 재분석 조회 실패")
 
         if range_errors:
             source_details.append(
